@@ -89,28 +89,23 @@ static float32_t Ts = control_task_period * 1e-6;
 static PidParams pid_params(Ts, kp, Ti, Td, N, lower_bound, upper_bound);
 static Pid pid;
 
+/* SM switching variables */
+
+static uint32_t SM_on = 1;
+static bool SM_type = true;
+
 /*--------------------------------------------------------------- */
 
 /* LIST OF POSSIBLE MODES FOR THE OWNTECH CONVERTER */
 enum serial_interface_menu_mode
 {
     IDLEMODE = 0,
-    POWERMODE
+    POWERMODE,
+    SWITCHMODE
 };
 
 uint8_t mode = IDLEMODE;
 
-/*--------------MODULES SWITCHING FUNCTIONS------------------- */
-
-void SM_switching()
-{
-// if SM_type = 1, SM is HB
-    // if SM_on = 1, SM is on
-    // else if SM_on = 0, SM is off
-// else if SM_type = 0, SM is FB
-    // if SM_on = 1, SM is on
-    // else if SM_on = 0, SM is off
-}
 
 /*--------------SETUP FUNCTIONS------------------------------- */
 
@@ -125,7 +120,8 @@ void SM_switching()
 void setup_routine()
 {
     /* Buck voltage mode */
-    shield.power.initBuck(ALL);
+    shield.power.initBuck(LEG1);
+    shield.power.initBoost(LEG2);
 
     shield.sensors.enableDefaultTwistSensors();
 
@@ -162,8 +158,9 @@ void loop_communication_task()
                "|     ---- MENU buck voltage mode ----   |\n"
                "|     press i : idle mode                |\n"
                "|     press p : power mode               |\n"
-               "|     press u : voltage reference UP     |\n"
-               "|     press d : voltage reference DOWN   |\n"
+               "|     press s : indepedent switch mode   |\n"
+               "|     press u : duty cycle UP            |\n"
+               "|     press d : duty cycle DOWN          |\n"
                "|________________________________________|\n\n");
         /*------------------------------------------------------ */
         break;
@@ -176,10 +173,13 @@ void loop_communication_task()
         mode = POWERMODE;
         break;
     case 'u':
-        voltage_reference += 0.5;
+        duty_cycle += 0.05;
         break;
     case 'd':
-        voltage_reference -= 0.5;
+        duty_cycle -= 0.05;
+        break;
+    case 's':
+        mode = SWITCHMODE;
         break;
     default:
         break;
@@ -263,15 +263,81 @@ void loop_critical_task()
     }
     else if (mode == POWERMODE)
     {
-        duty_cycle = pid.calculateWithReturn(voltage_reference, V1_low_value);
-        shield.power.setDutyCycle(ALL,duty_cycle);
+        shield.power.setDutyCycle(LEG1,duty_cycle);
 
         /* Set POWER ON */
         if (!pwm_enable)
         {
             pwm_enable = true;
-            shield.power.start(ALL);
+            shield.power.start(LEG1);
         }
+    }
+    else if (mode == SWITCHMODE)
+    {
+        
+        if (SM_type == true) // HB module
+        {
+            if(SM_on == 0) // SM is off
+            {
+                shield.power.setDutyCycle(LEG1,0.0);
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(LEG1);
+                }
+            }
+            if(SM_on == 1) // SM is on
+            {
+                shield.power.setDutyCycle(LEG1,1.0);
+                /* Set POWER ON */
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(LEG1);
+                }
+            }
+            if(SM_on == 2) // SM is blocked (both switches off)
+            { 
+                shield.power.stop(LEG1);
+            }
+        }
+            
+        else if (SM_type == false) // FB module
+        {
+            if(SM_on == 0) // SM is off
+            {
+                shield.power.setDutyCycle(LEG1,0.0);
+                shield.power.setDutyCycle(LEG2,0.0);
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(ALL);
+                }
+            }
+            if(SM_on == 1) // SM is on with +vcap
+            {
+                shield.power.setDutyCycle(LEG1,1.0);
+                shield.power.setDutyCycle(LEG2,0.0);
+                /* Set POWER ON */
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(ALL);
+                }
+            }
+            if(SM_on == 2) // SM is on with -vcap
+            {
+                shield.power.setDutyCycle(LEG1,0.0);
+                shield.power.setDutyCycle(LEG2,1.0);
+                /* Set POWER ON */
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(ALL);
+                }
+            }
+        }
+
     }
 
 }
