@@ -36,6 +36,8 @@
 
 /*--------------OWNTECH Libraries----------------------------- */
 #include "pid.h"
+#include "arm_math_types.h"
+#include <ScopeMimicry.h>
 
 /*--------------SETUP FUNCTIONS DECLARATION------------------- */
 /* Setups the hardware and software of the system */
@@ -89,6 +91,17 @@ static float32_t Ts = control_task_period * 1e-6;
 static PidParams pid_params(Ts, kp, Ti, Td, N, lower_bound, upper_bound);
 static Pid pid;
 
+/* Scope variables */
+
+static bool enable_acq;
+static uint32_t num_trig_ratio_point = 512;
+static const uint16_t NB_DATAS = 2048; //Number of data acquired
+static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
+static uint16_t number_of_cycle = 2;
+static ScopeMimicry scope(NB_DATAS, 6);
+static bool is_downloading;
+static bool trigger = false;
+
 /* SM switching variables */
 
 static uint32_t SM_on = 1;
@@ -105,6 +118,32 @@ enum serial_interface_menu_mode
 };
 
 uint8_t mode = IDLEMODE;
+
+/*--------------SCOPE FUNCTIONS------------------------------- */
+
+/* Trigger function for scope manager */
+bool a_trigger() {
+    return trigger;
+}
+
+void dump_scope_datas(ScopeMimicry &scope)  {
+    uint8_t *buffer = scope.get_buffer();
+    /* We divide by 4 (4 bytes per float data) */
+    uint16_t buffer_size = scope.get_buffer_size() >> 2;
+    printk("begin record\n");
+    printk("#");
+    for (uint16_t k=0;k < scope.get_nb_channel(); k++) {
+        printk("%s,", scope.get_channel_name(k));
+    }
+    printk("\n");
+    printk("# %d\n", scope.get_final_idx());
+    for (uint16_t k=0;k < buffer_size; k++) {
+        printk("%08x\n", *((uint32_t *)buffer + k));
+        task.suspendBackgroundUs(100);
+    }
+    printk("end record\n");
+}
+
 
 
 /*--------------SETUP FUNCTIONS------------------------------- */
@@ -125,8 +164,23 @@ void setup_routine()
 
     shield.sensors.enableDefaultTwistSensors();
 
+    /* Enable switch control with max and min duty cycle*/
     shield.power.setDutyCycleMax(ALL,1.0);
     shield.power.setDutyCycleMin(ALL,0.0);
+
+    /* Configure scope channels, what measurelents do you want to acquire? */
+    scope.connectChannel(I1_low_value, "I1_low");
+    scope.connectChannel(I2_low_value, "I2_low");
+    scope.connectChannel(V1_low_value-V2_low_value, "V_SM");
+    scope.connectChannel(V1_low_value, "V1_low");
+    scope.connectChannel(V2_low_value, "V2_low");
+    scope.connectChannel(duty_cycle, "duty_cycle");
+    scope.connectChannel(I_high, "I_high"); //I_High indicates if the Q1 keeps conducting or not after bootstrap capacitor is discharged, if yes body diode conducts, if not the SM goes to blocked mode
+    scope.connectChannel(V_high, "V_high");
+    scope.set_trigger(&a_trigger);
+    scope.set_delay(0.2F);
+    scope.start();
+    //Vc_BTS indicates the bootstrap capacitor charge level, we have to measure it externally
 
     pid.init(pid_params);
 
@@ -180,6 +234,11 @@ void loop_communication_task()
         break;
     case 's':
         mode = SWITCHMODE;
+        trigger = true;
+        break;
+    case 'r':
+        is_downloading = true;
+        trigger = false;
         break;
     default:
         break;
@@ -264,7 +323,7 @@ void loop_critical_task()
     else if (mode == POWERMODE)
     {
         shield.power.setDutyCycle(LEG1,duty_cycle);
-
+        scope.acquire();
         /* Set POWER ON */
         if (!pwm_enable)
         {
@@ -337,7 +396,7 @@ void loop_critical_task()
                 }
             }
         }
-
+        scope.acquire();
     }
 
 }
