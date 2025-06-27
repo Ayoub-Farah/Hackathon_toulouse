@@ -98,7 +98,7 @@ static uint32_t num_trig_ratio_point = 512;
 static const uint16_t NB_DATAS = 2048; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
 static uint16_t number_of_cycle = 2;
-static ScopeMimicry scope(NB_DATAS, 6);
+static ScopeMimicry scope(NB_DATAS, 5);
 static bool is_downloading;
 static bool trigger = false;
 
@@ -169,11 +169,8 @@ void setup_routine()
     shield.power.setDutyCycleMin(ALL,0.0);
 
     /* Configure scope channels, what measurelents do you want to acquire? */
-    scope.connectChannel(I1_low_value, "I1_low");
-    scope.connectChannel(I2_low_value, "I2_low");
-    scope.connectChannel(V1_low_value-V2_low_value, "V_SM");
-    scope.connectChannel(V1_low_value, "V1_low");
-    scope.connectChannel(V2_low_value, "V2_low");
+    scope.connectChannel(I1_low_value, "I_SM");
+    scope.connectChannel(V1_low_value, "V_SM");
     scope.connectChannel(duty_cycle, "duty_cycle");
     scope.connectChannel(I_high, "I_high"); //I_High indicates if the Q1 keeps conducting or not after bootstrap capacitor is discharged, if yes body diode conducts, if not the SM goes to blocked mode
     scope.connectChannel(V_high, "V_high");
@@ -215,6 +212,10 @@ void loop_communication_task()
                "|     press s : indepedent switch mode   |\n"
                "|     press u : duty cycle UP            |\n"
                "|     press d : duty cycle DOWN          |\n"
+               "|     press o : SM is ON                 |\n"
+               "|     press f : SM is OFF                |\n"
+               "|     press b : SM is BLOCKED            |\n"
+               "|     press r : download datas           |\n"
                "|________________________________________|\n\n");
         /*------------------------------------------------------ */
         break;
@@ -235,6 +236,15 @@ void loop_communication_task()
     case 's':
         mode = SWITCHMODE;
         trigger = true;
+        break;
+    case 'o': //SM ON
+        SM_on= 1;
+        break;
+    case 'f': //SM OFF
+        SM_on= 0;
+        break;
+    case 'b': //Block SM
+        SM_on= 2;
         break;
     case 'r':
         is_downloading = true;
@@ -359,6 +369,7 @@ void loop_critical_task()
             { 
                 shield.power.stop(LEG1);
             }
+            shield.power.stop(LEG2);
         }
             
         else if (SM_type == false) // FB module
