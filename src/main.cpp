@@ -100,16 +100,20 @@ static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
 static uint16_t number_of_cycle = 2;
 static ScopeMimicry scope(NB_DATAS, 2);
 static bool is_downloading;
-static bool trigger = false;
+static bool trigger = true;
 
 /* SM switching variables */
 
-static float32_t N_u = 0;
-static float32_t N_l = 3;
+static uint8_t N_u;
+static uint8_t N_l;
+static float32_t scope_1;
+static float32_t scope_2;
 static bool master = true;
 static uint8_t g = 0;
-static uint8_t direction = 1;
-static uint32_t counter = 0;
+static uint8_t seq_u[6] = {0, 1, 2, 3, 2, 1};
+static uint8_t seq_l[6] = {3, 2, 1, 0, 1, 2};
+static uint8_t counter = 0;
+static uint32_t timer = 0;
 
 /*--------------------------------------------------------------- */
 
@@ -162,32 +166,31 @@ void dump_scope_datas(ScopeMimicry &scope)  {
 void setup_routine()
 {
     /* Buck voltage mode */
-    //shield.power.initBuck(LEG1);
-    //shield.power.initBoost(LEG2);
+    shield.power.initBuck(LEG1);
+    shield.power.initBoost(LEG2);
 
-    //shield.sensors.enableDefaultTwistSensors();
+    shield.sensors.enableDefaultTwistSensors();
 
     /* Enable switch control with max and min duty cycle*/
-    //shield.power.setDutyCycleMax(ALL,1.0);
-    //shield.power.setDutyCycleMin(ALL,0.0);
+    shield.power.setDutyCycleMax(ALL,1.0);
+    shield.power.setDutyCycleMin(ALL,0.0);
 
-    /* Configure scope channels, what measurelents do you want to acquire? */
+    /* Configure scope channels, what measurements do you want to acquire? */
     if (master == true)
     {
-        scope.connectChannel(N_u, "N_u");
-        scope.connectChannel(N_l, "N_l");
+        scope.connectChannel(scope_1, "N_u");
+        scope.connectChannel(scope_2, "N_l");
         scope.set_trigger(&a_trigger);
         scope.set_delay(0.2F);
         scope.start();
     }
-    //Vc_BTS indicates the bootstrap capacitor charge level, we have to measure it externally
 
     pid.init(pid_params);
 
     /* Then declare tasks */
     uint32_t app_task_number = task.createBackground(loop_application_task);
     uint32_t com_task_number = task.createBackground(loop_communication_task);
-    task.createCritical(loop_critical_task, 10000);
+    task.createCritical(loop_critical_task, 100);
 
     /* Finally, start tasks */
     task.startBackground(app_task_number);
@@ -203,41 +206,44 @@ void setup_routine()
  */
 void loop_communication_task()
 {
-    if (master == false)
+    received_serial_char = console_getchar();
+    switch (received_serial_char)
     {
-        received_serial_char = console_getchar();
-        switch (received_serial_char)
-        {
-        case 'h':
-            /*----------SERIAL INTERFACE MENU----------------------- */
-            printk(" ________________________________________ \n"
-                "|     ---- MENU buck voltage mode ----   |\n"
-                "|     press i : idle mode                |\n"
-                "|     press p : power mode               |\n"
-                "|     press o : SM is ON                 |\n"
-                "|     press f : SM is OFF                |\n"
-                "|________________________________________|\n\n");
-            /*------------------------------------------------------ */
-            break;
-        case 'i':
-            printk("idle mode\n");
-            mode = IDLEMODE;
-            break;
-        case 'p':
-            printk("power mode\n");
-            mode = POWERMODE;
-            break;
-        case 'o':
-            printk("SM ON\n");
-            g = 1;
-            break;
-        case 'f':
-            printk("SM OFF\n");
-            g = 0;
-            break;
-        default:
-            break;
-        }
+    case 'h':
+        /*----------SERIAL INTERFACE MENU----------------------- */
+        printk(" ________________________________________ \n"
+            "|     ---- MENU buck voltage mode ----   |\n"
+            "|     press i : idle mode                |\n"
+            "|     press p : power mode               |\n"
+            "|     press o : SM is ON                 |\n"
+            "|     press f : SM is OFF                |\n"
+            "|     press r : record data              |\n"
+            "|________________________________________|\n\n");
+        /*------------------------------------------------------ */
+        break;
+    case 'i':
+        printk("idle mode\n");
+        mode = IDLEMODE;
+        break;
+    case 'p':
+        printk("power mode\n");
+        mode = POWERMODE;
+        trigger = true;
+        break;
+    case 'o':
+        printk("SM ON\n");
+        g = 1;
+        break;
+    case 'f':
+        printk("SM OFF\n");
+        g = 0;
+        break;
+    case 'r':
+        is_downloading = true;
+        trigger = false;
+        break;
+    default:
+        break;
     }
 }
 
@@ -246,104 +252,100 @@ void loop_communication_task()
  * This task mostly logs back measurements to the USB serial interface.
  */
 void loop_application_task()
-{
-    if (mode == IDLEMODE)
+{   
+    if (master == true)
     {
-        //spin.led.turnOff();
+        if (mode == IDLEMODE)
+        {
+            spin.led.turnOff();
+            if (is_downloading)
+            {
+                dump_scope_datas(scope);
+                is_downloading = false;
+            }
+        }
+        if (mode == POWERMODE)
+        {
+            spin.led.toggle();
+
+            /*
+            if (counter >= 6) {
+                counter = 0;
+            }
+            N_u = seq_u[counter];  // recuperate
+            N_l = seq_l[counter];  // recuperate
+            counter++;
+            */
+
+            printk("%1.f:", scope_1);
+            printk("%1.f:", scope_2);
+            printk("%u:", counter);
+            printk("%u:", timer);
+            printk("\n");
+
+        }
+
+        task.suspendBackgroundMs(100);
     }
-    else if (mode == POWERMODE)
+
+    if (master == false)
     {
-        //spin.led.turnOn();
-
-        /*
-        shield.sensors.triggerTwistTempMeas(TEMP_SENSOR_1);
-        shield.sensors.triggerTwistTempMeas(TEMP_SENSOR_2);
-
-        meas_data = shield.sensors.getLatestValue(TEMP_SENSOR_1);
-        if (meas_data != NO_VALUE) temp_1_value = meas_data;
-
-        meas_data = shield.sensors.getLatestValue(TEMP_SENSOR_2);
-        if (meas_data != NO_VALUE) temp_2_value = meas_data;
-
-
-        printk("%.3f:", (double)I1_low_value);
-        printk("%.3f:", (double)V1_low_value);
-        printk("%.3f:", (double)voltage_reference);
-        printk("%.3f:", (double)I2_low_value);
-        printk("%.3f:", (double)V2_low_value);
-        printk("%.3f:", (double)voltage_reference);
-        printk("%.3f:", (double)I_high);
-        printk("%.3f:", (double)V_high);
-        printk("%.3f:", (double)temp_1_value);
-        printk("%.3f:", (double)temp_2_value);
-        printk("\n");
-        */
+        if (mode == IDLEMODE)
+        {
+            spin.led.toggle(); //indicates it is working
+        }
+        else if (mode == POWERMODE)
+        {
+            if (g == 1)
+            {
+                spin.led.turnOn();
+            }
+            else if (g == 1)
+            {
+                spin.led.turnOff();
+            }
+        }
+        task.suspendBackgroundMs(500000);
     }
-    task.suspendBackgroundMs(100);
 }
 
 /**
  * This is the code loop of the critical task
  * This task runs at 10kHz.
- *  - It retrieves sensors values
- *  - It runs the PID controller
- *  - It update the PWM signals
+ * - It update main N_u and N_l
+ * - It update sets follower logic -> SM on or off
  */
 void loop_critical_task()
 {
-    /*
-    meas_data = shield.sensors.getLatestValue(I1_LOW);
-    if (meas_data != NO_VALUE) I1_low_value = meas_data;
-
-    meas_data = shield.sensors.getLatestValue(V1_LOW);
-    if (meas_data != NO_VALUE) V1_low_value = meas_data;
-
-    meas_data = shield.sensors.getLatestValue(V2_LOW);
-    if (meas_data != NO_VALUE) V2_low_value = meas_data;
-
-    meas_data = shield.sensors.getLatestValue(I2_LOW);
-    if (meas_data != NO_VALUE) I2_low_value = meas_data;
-
-    meas_data = shield.sensors.getLatestValue(I_HIGH);
-    if (meas_data != NO_VALUE) I_high = meas_data;
-
-    meas_data = shield.sensors.getLatestValue(V_HIGH);
-    if (meas_data != NO_VALUE) V_high = meas_data;
-    */
-
-    if (master = true)
+    if (master == true)
     {
-        spin.led.toggle(); //indicates it is working
+        if (mode == IDLEMODE)
+        {
 
-        if (N_u == 3)
-        {
-            direction = 0;
         }
-        else if (N_u == 0)
+
+        if (mode == POWERMODE)
         {
-            direction = 1;
-        }
-        if (counter == 100)
-        {
-            if (direction == 1)
+            if (timer == 100)
             {
-                N_u++;
-                N_l--;
+                if (counter >= 6) {
+                counter = 0;
+                }
+                scope_1 = (float)seq_u[counter];  // recuperate
+                scope_2 = (float)seq_l[counter];  // recuperate
+                counter++;
+                timer = 0;
             }
-            if (direction == 0)
-            {
-                N_u--;
-                N_l++;
-            }
+            timer++;
+            scope.acquire();
         }
-        scope.acquire();
+    
     }
-    if (master = false)
+    else
     {
 
         if (mode == IDLEMODE)
         {
-            spin.led.toggle();
 
             if (pwm_enable == true)
             {
@@ -353,16 +355,13 @@ void loop_critical_task()
         }
         else if (mode == POWERMODE)
         {
-            //scope.acquire();
             if(g == 0) // SM is off
             {
                 //LED OFF
-                spin.led.turnOff();
             }
             if(g == 1) // SM is on
             {
                 //LED ON
-                spin.led.turnOn();
             }
         }
     
