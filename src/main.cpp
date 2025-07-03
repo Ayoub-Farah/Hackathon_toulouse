@@ -28,6 +28,7 @@
 /* --------------OWNTECH APIs---------------------------------- */
 #include "SpinAPI.h"
 #include "TaskAPI.h"
+#include "ShieldAPI.h"
 #include "CommunicationAPI.h"
 
 #define MMC_LEAD 0
@@ -73,7 +74,7 @@ void loop_critical_task();
 /* --------------USER VARIABLES DECLARATIONS------------------- */
 
 /* TODO : Define module_ID depending on the ID of the board */
-uint8_t module_ID = MMC_LEAD;
+uint8_t module_ID = MMC_LEAD; // The ID of the module, can be set to MMC_LEAD or any other SMx
 
 static uint8_t module_comand; // The command the followers needs to apply
 
@@ -100,13 +101,18 @@ float32_t MMC_capacitor_voltage[6];
 uint8_t buffer_tx[6];
 uint8_t buffer_rx[6];
 
+float32_t MMC_voltage = 0.0f;
+
+uint32_t counter_timer=0;
+uint32_t counter_receive=0;
+
 /* --------------SETUP FUNCTIONS------------------------------- */
 
 void reception_function(void)
 {
 	dataRX_mmc = *(MMC_frame_t *) buffer_rx;
 
-	if(Module_ID == MMC_LEAD)
+	if(module_ID == MMC_LEAD)
 	{
 		MMC_capacitor_voltage[dataRX_mmc.ID-1] = dataRX_mmc.Capacitor_Voltage;
 	}
@@ -115,18 +121,22 @@ void reception_function(void)
 		{
             if(dataRX_mmc.ID == MMC_LEAD)
             {
-                module_comand = GET_SIGNAL(dataRX_mmc.command, dataRX_mmc.ID);	
+                /* retrievig command from lead message*/
+                module_comand = GET_SIGNAL(dataRX_mmc.command, module_ID);	
             }
 			
+            /* The board following the ID of the one who sent will start sending 
+                the next message */
 			if((dataRX_mmc.ID == module_ID-1))
 			{
 			    dataTX_mmc.ID = module_ID;
-			   // dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
+			   dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
 			    memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
 			   communication.rs485.startTransmission();
 			}
 	
 		}
+        counter_receive++;
 }
 
 /**
@@ -140,6 +150,7 @@ void reception_function(void)
  */
 void setup_routine()
 {
+    shield.power.initBuck(ALL);
     /* Declare task */
     uint32_t background_task_number =
                             task.createBackground(loop_background_task);
@@ -167,11 +178,27 @@ void setup_routine()
  */
 void loop_background_task()
 {
+    if(module_ID == MMC_LEAD)
+    {
+        spin.led.toggle();
+    }else{
+
+        if(module_comand)
+        {
+            spin.led.turnOn();
+        }else{
+            spin.led.turnOff();
+        }
+    }
     /* Task content */
-    spin.led.toggle();
+    printk("SM1 voltage is: %f\n", MMC_capacitor_voltage[0]);
+    printk("SM2 voltage is: %f\n", MMC_capacitor_voltage[1]);
+    printk("counter_timer: %d\n", counter_timer);
+    printk("counter_receive: %d\n", counter_receive);
+    printk("\n");
 
     /* Pause between two runs of the task */
-    task.suspendBackgroundMs(1000);
+    task.suspendBackgroundMs(2000);
 }
 
 /**
@@ -190,16 +217,32 @@ void loop_critical_task()
     /* The lead sends commands to the followers */
     if (module_ID == MMC_LEAD)
     {
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM1, 0);
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM2, 1);
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM3, 1);
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM4, 1);
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM5, 1);
-        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM6, 1);
+        if( counter_timer < 50000)
+        {
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 0);
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 1);
+        }else{
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 1);
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 0);
+            counter_timer = 0; // Reset the counter 
+        }
+        SET_SIGNAL(dataTX_mmc.command, MMC_SM3, 1);
+        SET_SIGNAL(dataTX_mmc.command, MMC_SM4, 1);
+        SET_SIGNAL(dataTX_mmc.command, MMC_SM5, 1);
+        SET_SIGNAL(dataTX_mmc.command, MMC_SM6, 1);
 
-        memcpy(buffer_tx, &data_mmc, sizeof(data_mmc));
+        dataTX_mmc.ID = module_ID;
+        memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
         communication.rs485.startTransmission();
+    }else if(module_ID == MMC_SM1)
+    {
+        MMC_voltage = 32.0f; // Example voltage value for SM1
     }
+    else if(module_ID == MMC_SM2)
+    {
+        MMC_voltage = 33.0f; // Example voltage value for SM1
+    }
+    counter_timer++;
 }
 
 /**
