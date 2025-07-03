@@ -75,7 +75,7 @@ void loop_critical_task();
 /* TODO : Define module_ID depending on the ID of the board */
 uint8_t module_ID = MMC_LEAD;
 
-static uint8_t module_comand; // The command ethe slave needs to apply
+static uint8_t module_comand; // The command the followers needs to apply
 
 /**
  * This is a structure that defines the frame 
@@ -154,7 +154,7 @@ void setup_routine()
 
     communication.rs485.configure(buffer_tx, buffer_rx, sizeof(buffer_rx),
 				      reception_function,
-				      SPEED_10M); // custom configuration for RS485
+				      SPEED_20M); // custom configuration for RS485
 }
 
 /* --------------LOOP FUNCTIONS-------------------------------- */
@@ -187,15 +187,19 @@ void loop_background_task()
  */
 void loop_critical_task()
 {
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM1, 0);
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM2, 1);
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM3, 1);
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM4, 1);
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM5, 1);
-	SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM6, 1);
+    /* The lead sends commands to the followers */
+    if (module_ID == MMC_LEAD)
+    {
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM1, 0);
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM2, 1);
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM3, 1);
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM4, 1);
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM5, 1);
+        SET_SIGNAL(data_mmc.command, data_mmc.MMC_SM6, 1);
 
-    memcpy(buffer_tx, &data_mmc, sizeof(data_mmc));
-    communication.rs485.startTransmission();
+        memcpy(buffer_tx, &data_mmc, sizeof(data_mmc));
+        communication.rs485.startTransmission();
+    }
 }
 
 /**
