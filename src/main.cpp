@@ -98,14 +98,18 @@ static uint32_t num_trig_ratio_point = 512;
 static const uint16_t NB_DATAS = 2048; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
 static uint16_t number_of_cycle = 2;
-static ScopeMimicry scope(NB_DATAS, 5);
+static ScopeMimicry scope(NB_DATAS, 2);
 static bool is_downloading;
 static bool trigger = false;
 
 /* SM switching variables */
 
-static uint32_t SM_on = 1;
-static bool SM_type = true;
+static float32_t N_u = 0;
+static float32_t N_l = 3;
+static bool master = true;
+static uint8_t g = 0;
+static uint8_t direction = 1;
+static uint32_t counter = 0;
 
 /*--------------------------------------------------------------- */
 
@@ -113,8 +117,7 @@ static bool SM_type = true;
 enum serial_interface_menu_mode
 {
     IDLEMODE = 0,
-    POWERMODE,
-    SWITCHMODE
+    POWERMODE
 };
 
 uint8_t mode = IDLEMODE;
@@ -159,24 +162,24 @@ void dump_scope_datas(ScopeMimicry &scope)  {
 void setup_routine()
 {
     /* Buck voltage mode */
-    shield.power.initBuck(LEG1);
-    shield.power.initBoost(LEG2);
+    //shield.power.initBuck(LEG1);
+    //shield.power.initBoost(LEG2);
 
-    shield.sensors.enableDefaultTwistSensors();
+    //shield.sensors.enableDefaultTwistSensors();
 
     /* Enable switch control with max and min duty cycle*/
-    shield.power.setDutyCycleMax(ALL,1.0);
-    shield.power.setDutyCycleMin(ALL,0.0);
+    //shield.power.setDutyCycleMax(ALL,1.0);
+    //shield.power.setDutyCycleMin(ALL,0.0);
 
     /* Configure scope channels, what measurelents do you want to acquire? */
-    scope.connectChannel(I1_low_value, "I_SM");
-    scope.connectChannel(V1_low_value, "V_SM");
-    scope.connectChannel(duty_cycle, "duty_cycle");
-    scope.connectChannel(I_high, "I_high"); //I_High indicates if the Q1 keeps conducting or not after bootstrap capacitor is discharged, if yes body diode conducts, if not the SM goes to blocked mode
-    scope.connectChannel(V_high, "V_high");
-    scope.set_trigger(&a_trigger);
-    scope.set_delay(0.2F);
-    scope.start();
+    if (master == true)
+    {
+        scope.connectChannel(N_u, "N_u");
+        scope.connectChannel(N_l, "N_l");
+        scope.set_trigger(&a_trigger);
+        scope.set_delay(0.2F);
+        scope.start();
+    }
     //Vc_BTS indicates the bootstrap capacitor charge level, we have to measure it externally
 
     pid.init(pid_params);
@@ -184,7 +187,7 @@ void setup_routine()
     /* Then declare tasks */
     uint32_t app_task_number = task.createBackground(loop_application_task);
     uint32_t com_task_number = task.createBackground(loop_communication_task);
-    task.createCritical(loop_critical_task, 100);
+    task.createCritical(loop_critical_task, 10000);
 
     /* Finally, start tasks */
     task.startBackground(app_task_number);
@@ -200,58 +203,41 @@ void setup_routine()
  */
 void loop_communication_task()
 {
-    received_serial_char = console_getchar();
-    switch (received_serial_char)
+    if (master == false)
     {
-    case 'h':
-        /*----------SERIAL INTERFACE MENU----------------------- */
-        printk(" ________________________________________ \n"
-               "|     ---- MENU buck voltage mode ----   |\n"
-               "|     press i : idle mode                |\n"
-               "|     press p : power mode               |\n"
-               "|     press s : indepedent switch mode   |\n"
-               "|     press u : duty cycle UP            |\n"
-               "|     press d : duty cycle DOWN          |\n"
-               "|     press o : SM is ON                 |\n"
-               "|     press f : SM is OFF                |\n"
-               "|     press b : SM is BLOCKED            |\n"
-               "|     press r : download datas           |\n"
-               "|________________________________________|\n\n");
-        /*------------------------------------------------------ */
-        break;
-    case 'i':
-        printk("idle mode\n");
-        mode = IDLEMODE;
-        break;
-    case 'p':
-        printk("power mode\n");
-        mode = POWERMODE;
-        break;
-    case 'u':
-        duty_cycle += 0.05;
-        break;
-    case 'd':
-        duty_cycle -= 0.05;
-        break;
-    case 's':
-        mode = SWITCHMODE;
-        trigger = true;
-        break;
-    case 'o': //SM ON
-        SM_on= 1;
-        break;
-    case 'f': //SM OFF
-        SM_on= 0;
-        break;
-    case 'b': //Block SM
-        SM_on= 2;
-        break;
-    case 'r':
-        is_downloading = true;
-        trigger = false;
-        break;
-    default:
-        break;
+        received_serial_char = console_getchar();
+        switch (received_serial_char)
+        {
+        case 'h':
+            /*----------SERIAL INTERFACE MENU----------------------- */
+            printk(" ________________________________________ \n"
+                "|     ---- MENU buck voltage mode ----   |\n"
+                "|     press i : idle mode                |\n"
+                "|     press p : power mode               |\n"
+                "|     press o : SM is ON                 |\n"
+                "|     press f : SM is OFF                |\n"
+                "|________________________________________|\n\n");
+            /*------------------------------------------------------ */
+            break;
+        case 'i':
+            printk("idle mode\n");
+            mode = IDLEMODE;
+            break;
+        case 'p':
+            printk("power mode\n");
+            mode = POWERMODE;
+            break;
+        case 'o':
+            printk("SM ON\n");
+            g = 1;
+            break;
+        case 'f':
+            printk("SM OFF\n");
+            g = 0;
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -263,12 +249,13 @@ void loop_application_task()
 {
     if (mode == IDLEMODE)
     {
-        spin.led.turnOff();
+        //spin.led.turnOff();
     }
     else if (mode == POWERMODE)
     {
-        spin.led.turnOn();
+        //spin.led.turnOn();
 
+        /*
         shield.sensors.triggerTwistTempMeas(TEMP_SENSOR_1);
         shield.sensors.triggerTwistTempMeas(TEMP_SENSOR_2);
 
@@ -290,6 +277,7 @@ void loop_application_task()
         printk("%.3f:", (double)temp_1_value);
         printk("%.3f:", (double)temp_2_value);
         printk("\n");
+        */
     }
     task.suspendBackgroundMs(100);
 }
@@ -303,6 +291,7 @@ void loop_application_task()
  */
 void loop_critical_task()
 {
+    /*
     meas_data = shield.sensors.getLatestValue(I1_LOW);
     if (meas_data != NO_VALUE) I1_low_value = meas_data;
 
@@ -320,94 +309,63 @@ void loop_critical_task()
 
     meas_data = shield.sensors.getLatestValue(V_HIGH);
     if (meas_data != NO_VALUE) V_high = meas_data;
+    */
 
+    if (master = true)
+    {
+        spin.led.toggle(); //indicates it is working
 
-    if (mode == IDLEMODE)
-    {
-        if (pwm_enable == true)
+        if (N_u == 3)
         {
-            shield.power.stop(ALL);
+            direction = 0;
         }
-        pwm_enable = false;
-    }
-    else if (mode == POWERMODE)
-    {
-        shield.power.setDutyCycle(LEG1,duty_cycle);
-        scope.acquire();
-        /* Set POWER ON */
-        if (!pwm_enable)
+        else if (N_u == 0)
         {
-            pwm_enable = true;
-            shield.power.start(LEG1);
+            direction = 1;
         }
-    }
-    else if (mode == SWITCHMODE)
-    {
-        
-        if (SM_type == true) // HB module
+        if (counter == 100)
         {
-            if(SM_on == 0) // SM is off
+            if (direction == 1)
             {
-                shield.power.setDutyCycle(LEG1,0.0);
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(LEG1);
-                }
+                N_u++;
+                N_l--;
             }
-            if(SM_on == 1) // SM is on
+            if (direction == 0)
             {
-                shield.power.setDutyCycle(LEG1,1.0);
-                /* Set POWER ON */
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(LEG1);
-                }
-            }
-            if(SM_on == 2) // SM is blocked (both switches off)
-            { 
-                shield.power.stop(LEG1);
-            }
-            shield.power.stop(LEG2);
-        }
-            
-        else if (SM_type == false) // FB module
-        {
-            if(SM_on == 0) // SM is off
-            {
-                shield.power.setDutyCycle(LEG1,0.0);
-                shield.power.setDutyCycle(LEG2,0.0);
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(ALL);
-                }
-            }
-            if(SM_on == 1) // SM is on with +vcap
-            {
-                shield.power.setDutyCycle(LEG1,1.0);
-                shield.power.setDutyCycle(LEG2,0.0);
-                /* Set POWER ON */
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(ALL);
-                }
-            }
-            if(SM_on == 2) // SM is on with -vcap
-            {
-                shield.power.setDutyCycle(LEG1,0.0);
-                shield.power.setDutyCycle(LEG2,1.0);
-                /* Set POWER ON */
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(ALL);
-                }
+                N_u--;
+                N_l++;
             }
         }
         scope.acquire();
+    }
+    if (master = false)
+    {
+
+        if (mode == IDLEMODE)
+        {
+            spin.led.toggle();
+
+            if (pwm_enable == true)
+            {
+                shield.power.stop(ALL);
+            }
+            pwm_enable = false;
+        }
+        else if (mode == POWERMODE)
+        {
+            //scope.acquire();
+            if(g == 0) // SM is off
+            {
+                //LED OFF
+                spin.led.turnOff();
+            }
+            if(g == 1) // SM is on
+            {
+                //LED ON
+                spin.led.turnOn();
+            }
+        }
+    
     }
 
 }
