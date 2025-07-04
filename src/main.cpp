@@ -49,6 +49,8 @@ void loop_application_task();
 /* Code to be executed in real time in the critical task */
 void loop_critical_task();
 
+void sorting();
+
 /*--------------USER VARIABLES DECLARATIONS------------------- */
 
 /* [us] period of the control task */
@@ -108,6 +110,9 @@ static uint32_t critical_period = 100; // 100 µs;
 static uint8_t N_u;
 static uint8_t N_l;
 static float32_t scope_1;
+static float32_t number_of_connected_submodules_upper_arm;
+static float32_t number_of_connected_submodules_lower_arm;
+
 static float32_t scope_2;
 static bool master = true;
 static uint8_t seq_u[6] = {1, 2, 3, 2, 1, 0};
@@ -117,8 +122,8 @@ static uint32_t sw_timer = 0;
 static uint32_t scope_timer = 0;
 static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
 //static uint32_t sw_period = 1/(f_sw*critical_period)*1000000; // 2 Hz = 0.5 s to transition;
-static uint32_t sw_period = 1000; // 2 Hz = 0.5 s to transition;
-static uint32_t scope_period = 25; // acquire every 1000 * 100 µs;
+static uint32_t sw_period = 10; // 2 Hz = 0.5 s to transition;
+static uint32_t scope_period = 1; // acquire every 1000 * 100 µs;
 
 /* CVB variables */
 static float32_t values[3] = {3.0,5.0,4.0}; // Example values to be sorted
@@ -130,8 +135,8 @@ static float32_t index_2;
 static float32_t index_3;
 
 /* Gate logic */
-static uint8_t temp_gate;
-static uint8_t g[3] = {0,0,0}; // Example gate signals to send
+static uint8_t gate_index;
+uint8_t g[3] = {0,0,0}; // Example gate signals to send
 static uint8_t g_SM;
 static float32_t g_u_1;
 static float32_t g_u_2;
@@ -200,17 +205,17 @@ void setup_routine()
     /* Configure scope channels, what measurements do you want to acquire? */
     if (master == true)
     {
-        scope.connectChannel(scope_1, "N_u");
-        scope.connectChannel(scope_2, "N_l");
+        scope.connectChannel(number_of_connected_submodules_upper_arm, "N_u");
+        scope.connectChannel(number_of_connected_submodules_lower_arm, "N_l");
         //scope.connectChannel(values[0], "value 1");
         //scope.connectChannel(values[1], "value 2");
         //scope.connectChannel(values[2], "value 3");
-        scope.connectChannel(index_1, "index 1");
-        scope.connectChannel(index_2, "index 2");
-        scope.connectChannel(index_3, "index 3");
-        //scope.connectChannel(g_u_1, "g_u_1");
-        //scope.connectChannel(g_u_2, "g_u_2");
-        //scope.connectChannel(g_u_3, "g_u_3");
+        //scope.connectChannel(index_1, "index 1");
+        //scope.connectChannel(index_2, "index 2");
+        //scope.connectChannel(index_3, "index 3");
+        scope.connectChannel(g_u_1, "g_u_1");
+        scope.connectChannel(g_u_2, "g_u_2");
+        scope.connectChannel(g_u_3, "g_u_3");
         scope.set_trigger(&a_trigger);
         scope.set_delay(0.0F);
         scope.start();
@@ -337,13 +342,20 @@ void loop_application_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-            printk("%1.f:", scope_1);
-            printk("%1.f:", scope_2);
+            sorting();
+            printk("%1.f:", number_of_connected_submodules_upper_arm);
+            printk("%1.f:", number_of_connected_submodules_lower_arm);
             printk("%u:", counter_seq);
             printk("%u:", sw_timer);
+            printk("%1.f:", index_1);
+            printk("%1.f:", index_2);
+            printk("%1.f:", index_3);
+            printk("%u:", g_u_1);
+            printk("%u:", g_u_2);
+            printk("%u:", g_u_3);
             printk("\n");
         }
-        task.suspendBackgroundMs(100);
+        task.suspendBackgroundMs(1000);
     }
 
     if (master == false)
@@ -365,10 +377,37 @@ void loop_application_task()
                 
             }
         }
-        task.suspendBackgroundMs(500000);
+        task.suspendBackgroundMs(1000);
     }
 }
 
+
+void sorting()
+{
+    uint8_t loops_sorting = 0;
+    while(loops_sorting < 10){
+            for(uint8_t counter = 0; counter < N_modules-1; counter++)
+            {
+                if(values[counter] > values[counter + 1])
+                {
+                    float32_t temp = values[counter];
+                    values[counter] = values[counter + 1];
+                    values[counter + 1] = temp;
+                    float32_t temp2 = indexes[counter];
+                    indexes[counter] = indexes[counter + 1];
+                    indexes[counter + 1] = temp2;
+                }
+            }
+            loops_sorting++;
+        }
+
+}
+
+void gate_signals()
+{
+
+
+}
 /**
  * This is the code loop of the critical task
  * This task runs at 10kHz.
@@ -415,46 +454,75 @@ void loop_critical_task()
                 if (counter_seq >= 6) {
                     counter_seq = 0;
                 }
-                scope_1 = (float)seq_u[counter_seq];  // recuperate
-                scope_2 = (float)seq_l[counter_seq];  // recuperate
+                number_of_connected_submodules_upper_arm = (float)seq_u[counter_seq];  // recuperate
+                number_of_connected_submodules_lower_arm = (float)seq_l[counter_seq];  // recuperate
                 counter_seq++;
                 sw_timer = 0;
             }
 
-            uint8_t loops_sorting = 0;
-            while(loops_sorting < N_modules){
-                    for(uint8_t counter = 0; counter < N_modules-1; counter++)
-                    {
-                        if(values[counter] > values[counter + 1])
-                        {
-                            float32_t temp = values[counter];
-                            values[counter] = values[counter + 1];
-                            values[counter + 1] = temp;
-                            float32_t temp2 = indexes[counter];
-                            indexes[counter] = indexes[counter + 1];
-                            indexes[counter + 1] = temp2;
-                        }
-                    }
-                    loops_sorting++;
+            //sorting();
+
+            if(number_of_connected_submodules_upper_arm == 0){
+                g[0] = 0;
+                g[1] = 0;
+                g[2] = 0;
+            }
+            if(number_of_connected_submodules_upper_arm == 1){
+                g[0] = 1;
+                g[1] = 0;
+                g[2] = 0;
+            }
+            if(number_of_connected_submodules_upper_arm == 2){
+                g[0] = 1;
+                g[1] = 1;
+                g[2] = 0;
+            }
+            if(number_of_connected_submodules_upper_arm == 3){
+                g[0] = 1;
+                g[1] = 1;
+                g[2] = 1;
+            }
+
+
+            /*
+            for(uint8_t counter=0;counter<N_modules;counter++){
+                gate_index = indexes[counter];
+                if (counter < seq_u[counter_seq])
+                {
+                    g[gate_index] = 1;
                 }
+            }
+                */
+
+            // gate_index = indexes[counter];
+            // if (counter < number_of_connected_submodules_upper_arm)
+            // {
+            //     g[gate_index] = 1;
+            // }
+            // counter=2;
+
+            // gate_index = indexes[counter];
+            // if (counter < number_of_connected_submodules_upper_arm)
+            // {
+            //     g[gate_index] = 1;
+            // }
+            // counter++;
+
+
+            // sorting();
 
             index_1 = (float)indexes[0];  // recuperate
             index_2 = (float)indexes[1];  // recuperate
             index_3 = (float)indexes[2];  // recuperate
             
-            uint8_t loops_gate = 0;
-            while(loops_gate < N_modules-1){
-
-                    temp_gate = indexes[loops_gate];
-                    if (loops_gate < N_u-1)
-                    {
-                        g[temp_gate] = 1;
-                    }
-                    else{
-                        g[temp_gate] = 0;
-                    }
-                    loops_gate++;
-                }
+            
+            /*
+            for (uint8_t loops_gate = 0; loops_gate < N_modules; loops_gate++) {
+                uint8_t idx = indexes[loops_gate];      // now in [0..2]
+                g[idx] = (loops_gate < N_u) ? 1 : 0;
+            }
+            */
+            
 
             g_u_1 = (float)g[0];  // recuperate
             g_u_2 = (float)g[1];  // recuperate
