@@ -31,6 +31,9 @@
 #include "ShieldAPI.h"
 #include "CommunicationAPI.h"
 
+/*-- Zephyr includes --*/
+#include "zephyr/console/console.h"
+
 #define MMC_LEAD 0
 #define MMC_SM1 1
 #define MMC_SM2 2
@@ -77,6 +80,8 @@ void loop_critical_task();
 uint8_t module_ID = MMC_LEAD; // The ID of the module, can be set to MMC_LEAD or any other SMx
 
 static uint8_t module_comand; // The command the followers needs to apply
+static uint8_t module_command_past;
+static bool change_state_command = false; // Flag to change the state of the command
 
 /**
  * This is a structure that defines the frame 
@@ -106,7 +111,39 @@ float32_t MMC_voltage = 0.0f;
 uint32_t counter_timer=0;
 uint32_t counter_receive=0;
 
+uint8_t received_serial_char; // Variable to store the received character from the serial interface
+int8_t CommTask_num; 
+
+enum serial_interface_menu_mode // LIST OF POSSIBLE MODES FOR THE OWNTECH CONVERTER
+{
+	IDLEMODE = 0,
+	POWERMODE = 1,
+};
+
+serial_interface_menu_mode mode = IDLEMODE;
+
+void loop_communication_task(); // Code to be executed in the communication task
+
 /* --------------SETUP FUNCTIONS------------------------------- */
+
+void config_led_LL()
+{
+    LL_GPIO_SetPinMode          (GPIOA, LL_GPIO_PIN_5, LL_GPIO_MODE_OUTPUT);
+    LL_GPIO_SetPinSpeed         (GPIOA, LL_GPIO_PIN_5, LL_GPIO_SPEED_FREQ_VERY_HIGH);
+    LL_GPIO_SetPinOutputType    (GPIOA, LL_GPIO_PIN_5, LL_GPIO_OUTPUT_PUSHPULL);
+    LL_GPIO_SetPinPull          (GPIOA, LL_GPIO_PIN_5, LL_GPIO_PULL_NO);
+    LL_GPIO_ResetOutputPin      (GPIOA, LL_GPIO_PIN_5);
+}
+
+inline void Led_turnON_LL()
+{
+    LL_GPIO_SetOutputPin(GPIOA, LL_GPIO_PIN_5);
+}
+
+inline void Led_turnOFF_LL()
+{
+    LL_GPIO_ResetOutputPin(GPIOA, LL_GPIO_PIN_5);
+}
 
 void reception_function(void)
 {
@@ -129,6 +166,7 @@ void reception_function(void)
                 the next message */
 			if((dataRX_mmc.ID == module_ID-1))
 			{
+                dataTX_mmc = dataRX_mmc; // Copy the received data to the transmission data
 			    dataTX_mmc.ID = module_ID;
 			   dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
 			    memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
@@ -150,6 +188,9 @@ void reception_function(void)
  */
 void setup_routine()
 {
+    
+    config_led_LL(); // Configure the LED pin in Low Level
+
     shield.power.initBuck(ALL);
     /* Declare task */
     uint32_t background_task_number =
@@ -163,12 +204,39 @@ void setup_routine()
     /* Uncomment following line if you use the critical task */
     task.startCritical();
 
+	CommTask_num = task.createBackground(loop_communication_task);
+	task.startBackground(CommTask_num);
+
     communication.rs485.configure(buffer_tx, buffer_rx, sizeof(buffer_rx),
 				      reception_function,
 				      SPEED_20M); // custom configuration for RS485
 }
 
 /* --------------LOOP FUNCTIONS-------------------------------- */
+
+void loop_communication_task()
+{
+	received_serial_char = console_getchar();
+	switch (received_serial_char) {
+	case 'h':
+		//----------SERIAL INTERFACE MENU-----------------------
+		printk(" ________________________________________\n");
+		printk("|     ------- MENU ---------             |\n");
+		printk("|     press i : idle mode                |\n");
+		printk("|     press p : power mode               |\n");
+		printk("|________________________________________|\n\n");
+		//------------------------------------------------------
+		break;
+	case 'i':
+		mode = IDLEMODE;
+		break;
+	case 'p':
+		mode = POWERMODE;
+		break;
+	default:
+		break;
+	}
+}
 
 /**
  * This is the code loop of the background task
@@ -178,24 +246,30 @@ void setup_routine()
  */
 void loop_background_task()
 {
+    
     if(module_ID == MMC_LEAD)
     {
-        spin.led.toggle();
+        if(mode == POWERMODE)
+        {
+            spin.led.toggle();
+        }
+        /* Task content */
+        printk("SM1 voltage is: %f\n", MMC_capacitor_voltage[0]);
+        printk("SM2 voltage is: %f\n", MMC_capacitor_voltage[1]);
+        printk("counter_timer: %d\n", counter_timer);
+        printk("counter_receive: %d\n", counter_receive);
+        printk("command_send: %d\n", dataTX_mmc.command);
+        printk("command send to SM1: %d\n", GET_SIGNAL(dataTX_mmc.command, MMC_SM1));
+        printk("command send to SM2: %d\n", GET_SIGNAL(dataTX_mmc.command, MMC_SM2));
+        printk("\n");
     }else{
 
-        if(module_comand)
-        {
-            spin.led.turnOn();
-        }else{
-            spin.led.turnOff();
-        }
+
+        printk("counter_timer: %d\n", counter_timer);
+        printk("counter_receive: %d\n", counter_receive);
+        printk("command_send: %d\n", module_comand);
+        printk("\n");
     }
-    /* Task content */
-    printk("SM1 voltage is: %f\n", MMC_capacitor_voltage[0]);
-    printk("SM2 voltage is: %f\n", MMC_capacitor_voltage[1]);
-    printk("counter_timer: %d\n", counter_timer);
-    printk("counter_receive: %d\n", counter_receive);
-    printk("\n");
 
     /* Pause between two runs of the task */
     task.suspendBackgroundMs(2000);
@@ -214,33 +288,83 @@ void loop_background_task()
  */
 void loop_critical_task()
 {
-    /* The lead sends commands to the followers */
-    if (module_ID == MMC_LEAD)
+    if( mode == POWERMODE)
     {
-        if( counter_timer < 50000)
+        /* The lead sends commands to the followers */
+        if (module_ID == MMC_LEAD)
         {
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 0);
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 1);
-        }else{
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 1);
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 0);
-            counter_timer = 0; // Reset the counter 
-        }
-        SET_SIGNAL(dataTX_mmc.command, MMC_SM3, 1);
-        SET_SIGNAL(dataTX_mmc.command, MMC_SM4, 1);
-        SET_SIGNAL(dataTX_mmc.command, MMC_SM5, 1);
-        SET_SIGNAL(dataTX_mmc.command, MMC_SM6, 1);
+            if( counter_timer < 50000)
+            {
+                SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 0);
+                SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 1);
+            }else{
+                SET_SIGNAL(dataTX_mmc.command, MMC_SM1, 1);
+                SET_SIGNAL(dataTX_mmc.command, MMC_SM2, 0);
+                if(counter_timer >= 100000)
+                {
+                    counter_timer = 0; // Reset the counter
+                }
+            }
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM3, 0);
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM4, 0);
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM5, 0);
+            SET_SIGNAL(dataTX_mmc.command, MMC_SM6, 0);
 
-        dataTX_mmc.ID = module_ID;
-        memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
-        communication.rs485.startTransmission();
-    }else if(module_ID == MMC_SM1)
-    {
-        MMC_voltage = 32.0f; // Example voltage value for SM1
-    }
-    else if(module_ID == MMC_SM2)
-    {
-        MMC_voltage = 33.0f; // Example voltage value for SM1
+            dataTX_mmc.ID = module_ID;
+            memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
+            communication.rs485.startTransmission();
+        }else if(module_ID == MMC_SM1)
+        {
+            if(module_comand != module_command_past)   
+            {
+                change_state_command = true; // Set the flag to change the state
+            }
+
+            if(module_comand)
+            {
+                if(change_state_command)
+                {
+                    Led_turnON_LL();
+                    change_state_command = false; // Reset the flag
+                }
+            }else{
+                if(change_state_command)
+                {
+                    Led_turnOFF_LL();
+                    change_state_command = false; // Reset the flag
+                }
+            }
+
+            MMC_voltage = 32.0f; // Example voltage value for SM1
+
+
+        }
+        else if(module_ID == MMC_SM2)
+        {
+            MMC_voltage = 33.0f; // Example voltage value for SM1
+
+            if(module_comand != module_command_past)   
+            {
+                change_state_command = true; // Set the flag to change the state
+            }
+
+            if(module_comand)
+            {
+                if(change_state_command)
+                {
+                    Led_turnON_LL();
+                    change_state_command = false; // Reset the flag
+                }
+            }else{
+                if(change_state_command)
+                {
+                    Led_turnOFF_LL();
+                    change_state_command = false; // Reset the flag
+                }
+            }
+
+        }
+        module_command_past = module_comand; // Update the past command
     }
     counter_timer++;
 }
