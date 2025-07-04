@@ -99,7 +99,7 @@ static uint32_t num_trig_ratio_point = 1024;
 static const uint16_t NB_DATAS = 2048; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
 static uint16_t number_of_cycle = 2;
-static ScopeMimicry scope(NB_DATAS, 2);
+static ScopeMimicry scope(NB_DATAS, 5);
 static bool is_downloading;
 
 /* SM switching variables */
@@ -110,9 +110,8 @@ static uint8_t N_l;
 static float32_t scope_1;
 static float32_t scope_2;
 static bool master = true;
-static uint8_t g = 0;
-static uint8_t seq_u[6] = {0, 1, 2, 3, 2, 1};
-static uint8_t seq_l[6] = {3, 2, 1, 0, 1, 2};
+static uint8_t seq_u[6] = {1, 2, 3, 2, 1, 0};
+static uint8_t seq_l[6] = {2, 1, 0, 1, 2, 3};
 static uint8_t counter_seq = 0;
 static uint32_t sw_timer = 0;
 static uint32_t scope_timer = 0;
@@ -123,13 +122,24 @@ static uint32_t scope_period = 25; // acquire every 1000 * 100 µs;
 
 /* CVB variables */
 static float32_t values[3] = {3.0,5.0,4.0}; // Example values to be sorted
-static float32_t indexes[3] = {1,2,3}; // Example indexes to be sorted
-static float32_t g[3] = {0,0,0}; // Example gate signals to send
+static uint8_t indexes[3] = {1,2,3}; // Example indexes to be sorted
 static uint8_t counter= 0;
 static uint8_t N_modules= 3;
 static float32_t index_1;
 static float32_t index_2;
 static float32_t index_3;
+
+/* Gate logic */
+static uint8_t temp_gate;
+static uint8_t g[3] = {0,0,0}; // Example gate signals to send
+static uint8_t g_SM;
+static float32_t g_u_1;
+static float32_t g_u_2;
+static float32_t g_u_3;
+static float32_t g_l_1;
+static float32_t g_l_2;
+static float32_t g_l_3;
+
 
 /*--------------------------------------------------------------- */
 
@@ -195,9 +205,12 @@ void setup_routine()
         //scope.connectChannel(values[0], "value 1");
         //scope.connectChannel(values[1], "value 2");
         //scope.connectChannel(values[2], "value 3");
-        //scope.connectChannel(index_1, "index 1");
-        //scope.connectChannel(index_2, "index 2");
-        //scope.connectChannel(index_3, "index 3");
+        scope.connectChannel(index_1, "index 1");
+        scope.connectChannel(index_2, "index 2");
+        scope.connectChannel(index_3, "index 3");
+        //scope.connectChannel(g_u_1, "g_u_1");
+        //scope.connectChannel(g_u_2, "g_u_2");
+        //scope.connectChannel(g_u_3, "g_u_3");
         scope.set_trigger(&a_trigger);
         scope.set_delay(0.0F);
         scope.start();
@@ -284,11 +297,11 @@ void loop_communication_task()
             break;
         case 'o':
             printk("SM ON\n");
-            g = 1;
+            g_SM = 1;
             break;
         case 'f':
             printk("SM OFF\n");
-            g = 0;
+            g_SM = 0;
             break;
         case 'r':
             is_downloading = true;
@@ -341,13 +354,15 @@ void loop_application_task()
         }
         else if (mode == POWERMODE)
         {
-            if (g == 1)
+            if (g_SM == 1)
             {
                 spin.led.turnOn();
+                
             }
-            else if (g == 1)
+            else if (g_SM == 0)
             {
                 spin.led.turnOff();
+                
             }
         }
         task.suspendBackgroundMs(500000);
@@ -423,27 +438,28 @@ void loop_critical_task()
                     loops_sorting++;
                 }
 
-                uint8_t loops_gate = 0;
-                while(loops_gate < N_modules){
-                        for(uint8_t counter = 0; counter < N_modules-1; counter++)
-                        {
-                            if(values[counter] > values[counter + 1])
-                            {
-                                float32_t temp = values[counter];
-                                values[counter] = values[counter + 1];
-                                values[counter + 1] = temp;
-                                float32_t temp2 = indexes[counter];
-                                indexes[counter] = indexes[counter + 1];
-                                indexes[counter + 1] = temp2;
-                            }
-                        }
-                        loops_gate++;
+            index_1 = (float)indexes[0];  // recuperate
+            index_2 = (float)indexes[1];  // recuperate
+            index_3 = (float)indexes[2];  // recuperate
+            
+            uint8_t loops_gate = 0;
+            while(loops_gate < N_modules-1){
+
+                    temp_gate = indexes[loops_gate];
+                    if (loops_gate < N_u-1)
+                    {
+                        g[temp_gate] = 1;
                     }
+                    else{
+                        g[temp_gate] = 0;
+                    }
+                    loops_gate++;
+                }
 
-                index_1 = (float)indexes[0];  // recuperate
-                index_2 = (float)indexes[1];  // recuperate
-                index_3 = (float)indexes[2];  // recuperate
-
+            g_u_1 = (float)g[0];  // recuperate
+            g_u_2 = (float)g[1];  // recuperate
+            g_u_3 = (float)g[2];  // recuperate
+            
             if (scope_timer == scope_period)
             {
                 scope.acquire();
@@ -466,14 +482,30 @@ void loop_critical_task()
         }
         else if (mode == POWERMODE)
         {
-            if(g == 0) // SM is off
+            if(g_SM == 0) // SM is off
             {
-                //LED OFF
+                /*
+                shield.power.setDutyCycle(LEG1,0.0); // Switches Q1 off
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(LEG1);
+                }
+                */
             }
-            if(g == 1) // SM is on
+            if(g_SM == 1) // SM is on
             {
-                //LED ON
+                /*
+                shield.power.setDutyCycle(LEG1,1.0); // Switches Q1 on
+                if (!pwm_enable)
+                {
+                    pwm_enable = true;
+                    shield.power.start(LEG1);
+                }
+                */
+                
             }
+            //shield.power.stop(LEG2);
         }
     
     }
