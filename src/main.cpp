@@ -113,7 +113,11 @@ static uint8_t g = 0;
 static uint8_t seq_u[6] = {0, 1, 2, 3, 2, 1};
 static uint8_t seq_l[6] = {3, 2, 1, 0, 1, 2};
 static uint8_t counter = 0;
-static uint32_t timer = 0;
+static uint32_t sw_timer = 0;
+static uint32_t scope_timer = 0;
+static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
+static uint32_t scope_period = 1000; // acquire every 1000 * 100 µs;
+
 
 /*--------------------------------------------------------------- */
 
@@ -280,7 +284,7 @@ void loop_application_task()
             printk("%1.f:", scope_1);
             printk("%1.f:", scope_2);
             printk("%u:", counter);
-            printk("%u:", timer);
+            printk("%u:", sw_timer);
             printk("\n");
 
         }
@@ -326,7 +330,7 @@ void loop_critical_task()
 
         if (mode == POWERMODE)
         {
-            if (timer == 100)
+            if (sw_timer == 1/f_sw)
             {
                 if (counter >= 6) {
                 counter = 0;
@@ -334,10 +338,15 @@ void loop_critical_task()
                 scope_1 = (float)seq_u[counter];  // recuperate
                 scope_2 = (float)seq_l[counter];  // recuperate
                 counter++;
-                timer = 0;
+                sw_timer = 0;
             }
-            timer++;
-            scope.acquire();
+
+            if (scope_timer == scope_period)
+            {
+                scope.acquire();
+            }
+            sw_timer++;
+            scope_timer++;
         }
     
     }
