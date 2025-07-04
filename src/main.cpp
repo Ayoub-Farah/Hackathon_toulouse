@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2021-present LAAS-CNRS
+ * Copyright (c) 2023-present LAAS-CNRS
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU Lesser General Public License as published by
@@ -21,9 +21,7 @@
  * @brief  This example demonstrates how to deploy a Buck converter with
  *         voltage mode control on the Twist power shield.
  *
- * @author Clément Foucher <clement.foucher@laas.fr>
- * @author Luiz Villa <luiz.villa@laas.fr>
- * @author Ayoub Farah Hassan <ayoub.farah-hassan@laas.fr>
+ * @author Régis Ruelland <regis.ruelland@laas.fr>
  */
 
 /*--------------Zephyr---------------------------------------- */
@@ -93,14 +91,16 @@ static Pid pid;
 
 /* Scope variables */
 
-static bool enable_acq;
-static uint32_t num_trig_ratio_point = 512;
+static bool enable_acq; //trigger variable
+static float32_t trig_ratio;
+static float32_t begin_trig_ratio = 0.05;
+static float32_t end_trig_ratio = 0.95;
+static uint32_t num_trig_ratio_point = 1024;
 static const uint16_t NB_DATAS = 2048; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
 static uint16_t number_of_cycle = 2;
 static ScopeMimicry scope(NB_DATAS, 2);
 static bool is_downloading;
-static bool trigger = true;
 
 /* SM switching variables */
 
@@ -113,7 +113,7 @@ static bool master = true;
 static uint8_t g = 0;
 static uint8_t seq_u[6] = {0, 1, 2, 3, 2, 1};
 static uint8_t seq_l[6] = {3, 2, 1, 0, 1, 2};
-static uint8_t counter = 0;
+static uint8_t counter_seq = 0;
 static uint32_t sw_timer = 0;
 static uint32_t scope_timer = 0;
 static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
@@ -121,6 +121,15 @@ static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
 static uint32_t sw_period = 1000; // 2 Hz = 0.5 s to transition;
 static uint32_t scope_period = 25; // acquire every 1000 * 100 µs;
 
+/* CVB variables */
+static float32_t values[3] = {3.0,5.0,4.0}; // Example values to be sorted
+static float32_t indexes[3] = {1,2,3}; // Example indexes to be sorted
+static float32_t g[3] = {0,0,0}; // Example gate signals to send
+static uint8_t counter= 0;
+static uint8_t N_modules= 3;
+static float32_t index_1;
+static float32_t index_2;
+static float32_t index_3;
 
 /*--------------------------------------------------------------- */
 
@@ -133,11 +142,9 @@ enum serial_interface_menu_mode
 
 uint8_t mode = IDLEMODE;
 
-/*--------------SCOPE FUNCTIONS------------------------------- */
-
 /* Trigger function for scope manager */
 bool a_trigger() {
-    return trigger;
+    return enable_acq;
 }
 
 void dump_scope_datas(ScopeMimicry &scope)  {
@@ -157,8 +164,6 @@ void dump_scope_datas(ScopeMimicry &scope)  {
     }
     printk("end record\n");
 }
-
-
 
 /*--------------SETUP FUNCTIONS------------------------------- */
 
@@ -187,8 +192,14 @@ void setup_routine()
     {
         scope.connectChannel(scope_1, "N_u");
         scope.connectChannel(scope_2, "N_l");
+        //scope.connectChannel(values[0], "value 1");
+        //scope.connectChannel(values[1], "value 2");
+        //scope.connectChannel(values[2], "value 3");
+        //scope.connectChannel(index_1, "index 1");
+        //scope.connectChannel(index_2, "index 2");
+        //scope.connectChannel(index_3, "index 3");
         scope.set_trigger(&a_trigger);
-        scope.set_delay(0.2F);
+        scope.set_delay(0.0F);
         scope.start();
     }
 
@@ -214,45 +225,84 @@ void setup_routine()
 void loop_communication_task()
 {
     received_serial_char = console_getchar();
-    switch (received_serial_char)
+    if (master == true)
     {
-    case 'h':
-        /*----------SERIAL INTERFACE MENU----------------------- */
-        printk(" ________________________________________ \n"
-            "|     ---- MENU buck voltage mode ----   |\n"
-            "|     press i : idle mode                |\n"
-            "|     press p : power mode               |\n"
-            "|     press o : SM is ON                 |\n"
-            "|     press f : SM is OFF                |\n"
-            "|     press r : record data              |\n"
-            "|________________________________________|\n\n");
-        /*------------------------------------------------------ */
-        break;
-    case 'i':
-        printk("idle mode\n");
-        mode = IDLEMODE;
-        break;
-    case 'p':
-        printk("power mode\n");
-        mode = POWERMODE;
-        trigger = true;
-        break;
-    case 'o':
-        printk("SM ON\n");
-        g = 1;
-        break;
-    case 'f':
-        printk("SM OFF\n");
-        g = 0;
-        break;
-    case 'r':
-        is_downloading = true;
-        trigger = false;
-        break;
-    default:
-        break;
+        switch (received_serial_char)
+        {
+        case 'h':
+            /*----------SERIAL INTERFACE MENU----------------------- */
+            printk(" ________________________________________ \n"
+                "|     ---- MENU buck voltage mode ----   |\n"
+                "|     press i : idle mode                |\n"
+                "|     press p : power mode               |\n"
+                "|     press r : record data              |\n"
+                "|     press a : toggle enable_acq var    |\n"
+                "|________________________________________|\n\n");
+            /*------------------------------------------------------ */
+            break;
+        case 'i':
+            printk("idle mode\n");
+            mode = IDLEMODE;
+            break;
+        case 'p':
+            printk("power mode\n");
+            mode = POWERMODE;
+            break;
+        case 'r':
+            is_downloading = true;
+            break;
+        case 'a':
+            enable_acq = !(enable_acq);
+            break;
+        default:
+            break;
+        }
     }
+    else{
+        switch (received_serial_char)
+        {
+        case 'h':
+            /*----------SERIAL INTERFACE MENU----------------------- */
+            printk(" ________________________________________ \n"
+                "|     ---- MENU buck voltage mode ----   |\n"
+                "|     press i : idle mode                |\n"
+                "|     press p : power mode               |\n"
+                "|     press o : SM is ON                 |\n"
+                "|     press f : SM is OFF                |\n"
+                "|     press r : record data              |\n"
+                "|     press a : toggle enable_acq var    |\n"
+                "|________________________________________|\n\n");
+            /*------------------------------------------------------ */
+            break;
+        case 'i':
+            printk("idle mode\n");
+            mode = IDLEMODE;
+            break;
+        case 'p':
+            printk("power mode\n");
+            mode = POWERMODE;
+            break;
+        case 'o':
+            printk("SM ON\n");
+            g = 1;
+            break;
+        case 'f':
+            printk("SM OFF\n");
+            g = 0;
+            break;
+        case 'r':
+            is_downloading = true;
+            break;
+        case 'a':
+            enable_acq = !(enable_acq);
+            break;
+        default:
+            break;
+        }
+    }
+    
 }
+
 
 /**
  * This is the code loop of the background task
@@ -274,24 +324,12 @@ void loop_application_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-
-            /*
-            if (counter >= 6) {
-                counter = 0;
-            }
-            N_u = seq_u[counter];  // recuperate
-            N_l = seq_l[counter];  // recuperate
-            counter++;
-            */
-
             printk("%1.f:", scope_1);
             printk("%1.f:", scope_2);
-            printk("%u:", counter);
+            printk("%u:", counter_seq);
             printk("%u:", sw_timer);
             printk("\n");
-
         }
-
         task.suspendBackgroundMs(100);
     }
 
@@ -321,28 +359,90 @@ void loop_application_task()
  * This task runs at 10kHz.
  * - It update main N_u and N_l
  * - It update sets follower logic -> SM on or off
+ * - It does the voltage sorting
+ * - It creates the gate signals to the SM
  */
 void loop_critical_task()
 {
+    meas_data = shield.sensors.getLatestValue(I1_LOW);
+    if (meas_data != NO_VALUE) I1_low_value = meas_data;
+
+    meas_data = shield.sensors.getLatestValue(V1_LOW);
+    if (meas_data != NO_VALUE) V1_low_value = meas_data;
+
+    meas_data = shield.sensors.getLatestValue(V2_LOW);
+    if (meas_data != NO_VALUE) V2_low_value = meas_data;
+
+    meas_data = shield.sensors.getLatestValue(I2_LOW);
+    if (meas_data != NO_VALUE) I2_low_value = meas_data;
+
+    meas_data = shield.sensors.getLatestValue(I_HIGH);
+    if (meas_data != NO_VALUE) I_high = meas_data;
+
+    meas_data = shield.sensors.getLatestValue(V_HIGH);
+    if (meas_data != NO_VALUE) V_high = meas_data;
+
     if (master == true)
     {
         if (mode == IDLEMODE)
         {
-
+            if (pwm_enable == true)
+            {
+                shield.power.stop(ALL);
+            }
+            pwm_enable = false;
         }
 
         if (mode == POWERMODE)
         {
             if (sw_timer == sw_period)
             {
-                if (counter >= 6) {
-                counter = 0;
+                if (counter_seq >= 6) {
+                    counter_seq = 0;
                 }
-                scope_1 = (float)seq_u[counter];  // recuperate
-                scope_2 = (float)seq_l[counter];  // recuperate
-                counter++;
+                scope_1 = (float)seq_u[counter_seq];  // recuperate
+                scope_2 = (float)seq_l[counter_seq];  // recuperate
+                counter_seq++;
                 sw_timer = 0;
             }
+
+            uint8_t loops_sorting = 0;
+            while(loops_sorting < N_modules){
+                    for(uint8_t counter = 0; counter < N_modules-1; counter++)
+                    {
+                        if(values[counter] > values[counter + 1])
+                        {
+                            float32_t temp = values[counter];
+                            values[counter] = values[counter + 1];
+                            values[counter + 1] = temp;
+                            float32_t temp2 = indexes[counter];
+                            indexes[counter] = indexes[counter + 1];
+                            indexes[counter + 1] = temp2;
+                        }
+                    }
+                    loops_sorting++;
+                }
+
+                uint8_t loops_gate = 0;
+                while(loops_gate < N_modules){
+                        for(uint8_t counter = 0; counter < N_modules-1; counter++)
+                        {
+                            if(values[counter] > values[counter + 1])
+                            {
+                                float32_t temp = values[counter];
+                                values[counter] = values[counter + 1];
+                                values[counter + 1] = temp;
+                                float32_t temp2 = indexes[counter];
+                                indexes[counter] = indexes[counter + 1];
+                                indexes[counter + 1] = temp2;
+                            }
+                        }
+                        loops_gate++;
+                    }
+
+                index_1 = (float)indexes[0];  // recuperate
+                index_2 = (float)indexes[1];  // recuperate
+                index_3 = (float)indexes[2];  // recuperate
 
             if (scope_timer == scope_period)
             {
@@ -356,10 +456,8 @@ void loop_critical_task()
     }
     else
     {
-
         if (mode == IDLEMODE)
         {
-
             if (pwm_enable == true)
             {
                 shield.power.stop(ALL);
@@ -379,8 +477,8 @@ void loop_critical_task()
         }
     
     }
-
 }
+
 
 /**
  * This is the main function of this example
