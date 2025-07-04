@@ -104,6 +104,7 @@ static bool trigger = true;
 
 /* SM switching variables */
 
+static uint32_t critical_period = 100; // 100 µs;
 static uint8_t N_u;
 static uint8_t N_l;
 static float32_t scope_1;
@@ -116,7 +117,9 @@ static uint8_t counter = 0;
 static uint32_t sw_timer = 0;
 static uint32_t scope_timer = 0;
 static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
-static uint32_t scope_period = 1000; // acquire every 1000 * 100 µs;
+//static uint32_t sw_period = 1/(f_sw*critical_period)*1000000; // 2 Hz = 0.5 s to transition;
+static uint32_t sw_period = 1000; // 2 Hz = 0.5 s to transition;
+static uint32_t scope_period = 25; // acquire every 1000 * 100 µs;
 
 
 /*--------------------------------------------------------------- */
@@ -330,7 +333,7 @@ void loop_critical_task()
 
         if (mode == POWERMODE)
         {
-            if (sw_timer == 1/f_sw)
+            if (sw_timer == sw_period)
             {
                 if (counter >= 6) {
                 counter = 0;
@@ -344,6 +347,7 @@ void loop_critical_task()
             if (scope_timer == scope_period)
             {
                 scope.acquire();
+                scope_timer = 0;
             }
             sw_timer++;
             scope_timer++;
