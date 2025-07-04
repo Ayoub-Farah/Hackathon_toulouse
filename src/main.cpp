@@ -77,11 +77,12 @@ void loop_critical_task();
 /* --------------USER VARIABLES DECLARATIONS------------------- */
 
 /* TODO : Define module_ID depending on the ID of the board */
-uint8_t module_ID = MMC_LEAD; // The ID of the module, can be set to MMC_LEAD or any other SMx
+uint8_t module_ID = MMC_SM2; // The ID of the module, can be set to MMC_LEAD or any other SMx
 
 static uint8_t module_comand; // The command the followers needs to apply
 static uint8_t module_command_past;
 static bool change_state_command = false; // Flag to change the state of the command
+static bool send_idle = false; // Flag to send idle command from master to followers
 
 /**
  * This is a structure that defines the frame 
@@ -93,6 +94,7 @@ static bool change_state_command = false; // Flag to change the state of the com
 struct MMC_frame {
 	uint8_t command;
 	float32_t Capacitor_Voltage;
+    uint8_t status;
 	uint8_t ID;
 }__packed;
 
@@ -103,8 +105,8 @@ static MMC_frame_t dataRX_mmc;
 float32_t MMC_capacitor_voltage[6];
 
 
-uint8_t buffer_tx[6];
-uint8_t buffer_rx[6];
+uint8_t buffer_tx[7];
+uint8_t buffer_rx[7];
 
 float32_t MMC_voltage = 0.0f;
 
@@ -160,6 +162,13 @@ void reception_function(void)
             {
                 /* retrievig command from lead message*/
                 module_comand = GET_SIGNAL(dataRX_mmc.command, module_ID);	
+                /* retrieving status */
+                if(dataRX_mmc.status == 1)
+                {
+                    mode = POWERMODE;
+                }else{
+                    mode = IDLEMODE;
+                }
             }
 			
             /* The board following the ID of the one who sent will start sending 
@@ -167,10 +176,13 @@ void reception_function(void)
 			if((dataRX_mmc.ID == module_ID-1))
 			{
                 dataTX_mmc = dataRX_mmc; // Copy the received data to the transmission data
-			    dataTX_mmc.ID = module_ID;
-			   dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
-			    memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
-			   communication.rs485.startTransmission();
+                dataTX_mmc.ID = module_ID;
+                dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
+                if(mode == POWERMODE)
+                {
+                    memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
+                    communication.rs485.startTransmission();
+                }
 			}
 	
 		}
@@ -232,6 +244,7 @@ void loop_communication_task()
 		break;
 	case 'p':
 		mode = POWERMODE;
+        send_idle = false; // Reset the flag to send idle command
 		break;
 	default:
 		break;
@@ -252,6 +265,8 @@ void loop_background_task()
         if(mode == POWERMODE)
         {
             spin.led.toggle();
+        }else{
+            spin.led.turnOff();
         }
         /* Task content */
         printk("SM1 voltage is: %f\n", MMC_capacitor_voltage[0]);
@@ -264,7 +279,10 @@ void loop_background_task()
         printk("\n");
     }else{
 
-
+        if(mode == IDLEMODE)
+        {
+            spin.led.turnOff();
+        }
         printk("counter_timer: %d\n", counter_timer);
         printk("counter_receive: %d\n", counter_receive);
         printk("command_send: %d\n", module_comand);
@@ -312,6 +330,7 @@ void loop_critical_task()
 
             dataTX_mmc.ID = module_ID;
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
+            dataTX_mmc.status = 1;
             communication.rs485.startTransmission();
         }else if(module_ID == MMC_SM1)
         {
@@ -335,7 +354,7 @@ void loop_critical_task()
                 }
             }
 
-            MMC_voltage = 32.0f; // Example voltage value for SM1
+            MMC_voltage = 32.0; // Example voltage value for SM1
 
 
         }
@@ -365,6 +384,17 @@ void loop_critical_task()
 
         }
         module_command_past = module_comand; // Update the past command
+    }else if(mode == IDLEMODE)
+    {
+        /* Made to send IDLE flag only once */
+        if(!send_idle)
+        {
+            dataTX_mmc.ID = module_ID;
+            dataTX_mmc.status = 0;
+            memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
+            communication.rs485.startTransmission();
+            send_idle = true; // Set the flag to send idle command
+        }
     }
     counter_timer++;
 }
