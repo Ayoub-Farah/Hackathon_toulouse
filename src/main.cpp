@@ -182,7 +182,7 @@ static uint32_t num_trig_ratio_point = 1024;
 static const uint16_t NB_DATAS = 2048; // Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t)NB_DATAS;
 static uint16_t number_of_cycle = 2;
-static ScopeMimicry scope(NB_DATAS, 5);
+static ScopeMimicry scope(NB_DATAS, 11);
 static bool is_downloading;
 
 /* SM switching variables */
@@ -317,6 +317,36 @@ void reception_function(void)
     counter_receive++;
 }
 
+void sorting()
+{
+    uint8_t loops_sorting = 0;
+    while(loops_sorting < 10){
+            for(uint8_t counter = 0; counter < N_modules-1; counter++)
+            {
+                if(values[counter] > values[counter + 1])
+                {
+                    float32_t temp = values[counter];
+                    values[counter] = values[counter + 1];
+                    values[counter + 1] = temp;
+                    float32_t temp2 = indexes[counter];
+                    indexes[counter] = indexes[counter + 1];
+                    indexes[counter + 1] = temp2;
+                }
+                g[0] = 0;
+                g[1] = 0;
+                g[2] = 0;
+                if(counter < number_of_connected_submodules_upper_arm)
+                {
+                    uint8_t index_smallest_voltage_capacitor = indexes[counter];
+                    g[index_smallest_voltage_capacitor] = 1;
+                }
+            }
+
+            loops_sorting++;
+        }
+
+}
+
 /**
  * This is the setup routine.
  * It is used to call functions that will initialize your spin, power shields
@@ -357,12 +387,12 @@ void setup_routine()
     {
         scope.connectChannel(number_of_connected_submodules_upper_arm, "N_u");
         scope.connectChannel(number_of_connected_submodules_lower_arm, "N_l");
-        // scope.connectChannel(values[0], "value 1");
-        // scope.connectChannel(values[1], "value 2");
-        // scope.connectChannel(values[2], "value 3");
-        // scope.connectChannel(index_1, "index 1");
-        // scope.connectChannel(index_2, "index 2");
-        // scope.connectChannel(index_3, "index 3");
+        scope.connectChannel(values[0], "vc 1");
+        scope.connectChannel(values[1], "vc 2");
+        scope.connectChannel(values[2], "vc 3");
+        scope.connectChannel(index_1, "index 1");
+        scope.connectChannel(index_2, "index 2");
+        scope.connectChannel(index_3, "index 3");
         scope.connectChannel(g_u_1, "g_u_1");
         scope.connectChannel(g_u_2, "g_u_2");
         scope.connectChannel(g_u_3, "g_u_3");
@@ -487,30 +517,32 @@ void loop_critical_task()
                 sw_timer = 0;
             }
 
-            if (number_of_connected_submodules_upper_arm == 0)
-            {
-                g[0] = 0;
-                g[1] = 0;
-                g[2] = 0;
-            }
-            if (number_of_connected_submodules_upper_arm == 1)
-            {
-                g[0] = 1;
-                g[1] = 0;
-                g[2] = 0;
-            }
-            if (number_of_connected_submodules_upper_arm == 2)
-            {
-                g[0] = 1;
-                g[1] = 1;
-                g[2] = 0;
-            }
-            if (number_of_connected_submodules_upper_arm == 3)
-            {
-                g[0] = 1;
-                g[1] = 1;
-                g[2] = 1;
-            }
+            sorting();
+
+            // if (number_of_connected_submodules_upper_arm == 0)
+            // {
+            //     g[0] = 0;
+            //     g[1] = 0;
+            //     g[2] = 0;
+            // }
+            // if (number_of_connected_submodules_upper_arm == 1)
+            // {
+            //     g[0] = 1;
+            //     g[1] = 0;
+            //     g[2] = 0;
+            // }
+            // if (number_of_connected_submodules_upper_arm == 2)
+            // {
+            //     g[0] = 1;
+            //     g[1] = 1;
+            //     g[2] = 0;
+            // }
+            // if (number_of_connected_submodules_upper_arm == 3)
+            // {
+            //     g[0] = 1;
+            //     g[1] = 1;
+            //     g[2] = 1;
+            // }
 
             index_1 = (float)indexes[0]; // recuperate
             index_2 = (float)indexes[1]; // recuperate
@@ -549,6 +581,12 @@ void loop_critical_task()
                 if (change_state_command)
                 {
                     Led_turnON_LL();
+                    shield.power.setDutyCycle(LEG1,1.0);
+                    if (!pwm_enable)
+                    {
+                        pwm_enable = true;
+                        shield.power.start(LEG1);
+                    }
                     change_state_command = false; // Reset the flag
                 }
             }
@@ -557,6 +595,12 @@ void loop_critical_task()
                 if (change_state_command)
                 {
                     Led_turnOFF_LL();
+                    shield.power.setDutyCycle(LEG1,0.0);
+                    if (!pwm_enable)
+                    {
+                        pwm_enable = true;
+                        shield.power.start(LEG1);
+                    }
                     change_state_command = false; // Reset the flag
                 }
             }
