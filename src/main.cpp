@@ -33,7 +33,6 @@
 #include "TaskAPI.h"
 
 /*--------------OWNTECH Libraries----------------------------- */
-#include "pid.h"
 #include "arm_math_types.h"
 #include <ScopeMimicry.h>
 
@@ -69,73 +68,42 @@ static float32_t I2_low_value;
 static float32_t I_high;
 static float32_t V_high;
 
-static float32_t temp_1_value;
-static float32_t temp_2_value;
-
 /* Temporary storage fore measured value (ctrl task) */
 static float meas_data;
 
 float32_t duty_cycle = 0.3;
 
-/* Voltage reference */
-static float32_t voltage_reference = 15;
-
-/* PID coefficients for a 8.6ms step response*/
-static float32_t kp = 0.000215;
-static float32_t Ti = 7.5175e-5;
-static float32_t Td = 0.0;
-static float32_t N = 0.0;
-static float32_t upper_bound = 1.0F;
-static float32_t lower_bound = 0.0F;
-static float32_t Ts = control_task_period * 1e-6;
-static PidParams pid_params(Ts, kp, Ti, Td, N, lower_bound, upper_bound);
-static Pid pid;
-
 /* Scope variables */
 
 static bool enable_acq; //trigger variable
-static float32_t trig_ratio;
-static float32_t begin_trig_ratio = 0.05;
-static float32_t end_trig_ratio = 0.95;
-static uint32_t num_trig_ratio_point = 1024;
 static const uint16_t NB_DATAS = 2048; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
-static uint16_t number_of_cycle = 2;
 static ScopeMimicry scope(NB_DATAS, 5);
 static bool is_downloading;
 
 /* SM switching variables */
 
-static uint32_t critical_period = 100; // 100 µs;
-static uint8_t N_u;
-static uint8_t N_l;
-static float32_t scope_1;
 static float32_t number_of_connected_submodules_upper_arm;
 static float32_t number_of_connected_submodules_lower_arm;
 
-static float32_t scope_2;
 static bool master = true;
 static uint8_t seq_u[6] = {1, 2, 3, 2, 1, 0};
 static uint8_t seq_l[6] = {2, 1, 0, 1, 2, 3};
 static uint8_t counter_seq = 0;
 static uint32_t sw_timer = 0;
 static uint32_t scope_timer = 0;
-static uint32_t f_sw = 2; // 2 Hz = 0.5 s to transition;
-//static uint32_t sw_period = 1/(f_sw*critical_period)*1000000; // 2 Hz = 0.5 s to transition;
-static uint32_t sw_period = 10; // 2 Hz = 0.5 s to transition;
-static uint32_t scope_period = 1; // acquire every 1000 * 100 µs;
+static uint32_t sw_period = 10000; // 2 Hz = 0.5 s to transition;
+static uint32_t scope_period = 100; // acquire every 1000 * 100 µs;
 
 /* CVB variables */
-static float32_t values[3] = {3.0,5.0,4.0}; // Example values to be sorted
-static uint8_t indexes[3] = {1,2,3}; // Example indexes to be sorted
-static uint8_t counter= 0;
-static uint8_t N_modules= 3;
+static float32_t modules_capacitor_voltages[3] = {3.0,5.0,4.0}; // Example values to be sorted
+static uint8_t modules_indexes[3] = {0,1,2}; // Example indexes to be sorted
+static uint8_t total_number_of_modules_arm= 3;
 static float32_t index_1;
 static float32_t index_2;
 static float32_t index_3;
 
 /* Gate logic */
-static uint8_t gate_index;
 uint8_t g[3] = {0,0,0}; // Example gate signals to send
 static uint8_t g_SM;
 static float32_t g_u_1;
@@ -187,7 +155,6 @@ void dump_scope_datas(ScopeMimicry &scope)  {
  * Here the setup :
  *  - Initializes the power shield in Buck mode
  *  - Initializes the power shield sensors
- *  - Initializes the PID controller
  *  - Spawns three tasks.
  */
 void setup_routine()
@@ -210,9 +177,9 @@ void setup_routine()
         //scope.connectChannel(values[0], "value 1");
         //scope.connectChannel(values[1], "value 2");
         //scope.connectChannel(values[2], "value 3");
-        //scope.connectChannel(index_1, "index 1");
-        //scope.connectChannel(index_2, "index 2");
-        //scope.connectChannel(index_3, "index 3");
+        // scope.connectChannel(index_1, "index 1");
+        // scope.connectChannel(index_2, "index 2");
+        // scope.connectChannel(index_3, "index 3");
         scope.connectChannel(g_u_1, "g_u_1");
         scope.connectChannel(g_u_2, "g_u_2");
         scope.connectChannel(g_u_3, "g_u_3");
@@ -220,8 +187,6 @@ void setup_routine()
         scope.set_delay(0.0F);
         scope.start();
     }
-
-    pid.init(pid_params);
 
     /* Then declare tasks */
     uint32_t app_task_number = task.createBackground(loop_application_task);
@@ -342,7 +307,6 @@ void loop_application_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-            sorting();
             printk("%1.f:", number_of_connected_submodules_upper_arm);
             printk("%1.f:", number_of_connected_submodules_lower_arm);
             printk("%u:", counter_seq);
@@ -377,28 +341,43 @@ void loop_application_task()
                 
             }
         }
-        task.suspendBackgroundMs(1000);
+        task.suspendBackgroundMs(2000);
     }
 }
 
 
 void sorting()
 {
-    uint8_t loops_sorting = 0;
-    while(loops_sorting < 10){
-            for(uint8_t counter = 0; counter < N_modules-1; counter++)
+    uint8_t counter_loops_sorting = 0;
+    while(counter_loops_sorting < 10){
+            g[0] = 0;
+            g[1] = 0;
+            g[2] = 0;
+            for(uint8_t counter = 0; counter < total_number_of_modules_arm-1; counter++)
             {
-                if(values[counter] > values[counter + 1])
+                if(modules_capacitor_voltages[counter] > modules_capacitor_voltages[counter + 1]) //Sorting modules indexes according to capacitor voltage
                 {
-                    float32_t temp = values[counter];
-                    values[counter] = values[counter + 1];
-                    values[counter + 1] = temp;
-                    float32_t temp2 = indexes[counter];
-                    indexes[counter] = indexes[counter + 1];
-                    indexes[counter + 1] = temp2;
+                    float32_t temp = modules_capacitor_voltages[counter];
+                    modules_capacitor_voltages[counter] = modules_capacitor_voltages[counter + 1];
+                    modules_capacitor_voltages[counter + 1] = temp;
+                    float32_t temp2 = modules_indexes[counter];
+                    modules_indexes[counter] = modules_indexes[counter + 1];
+                    modules_indexes[counter + 1] = temp2;
                 }
+                
+                
             }
-            loops_sorting++;
+
+            counter_loops_sorting++;
+        }
+    for(uint8_t counter = 0; counter < total_number_of_modules_arm; counter++)
+        {
+            if(counter < number_of_connected_submodules_upper_arm)
+                {
+                     uint8_t index_smallest_voltage_capacitor = modules_indexes[counter];
+                     g[index_smallest_voltage_capacitor] = 1;
+                     //g[counter] = 1;
+                }
         }
 
 }
@@ -460,69 +439,11 @@ void loop_critical_task()
                 sw_timer = 0;
             }
 
-            //sorting();
+            sorting();
 
-            if(number_of_connected_submodules_upper_arm == 0){
-                g[0] = 0;
-                g[1] = 0;
-                g[2] = 0;
-            }
-            if(number_of_connected_submodules_upper_arm == 1){
-                g[0] = 1;
-                g[1] = 0;
-                g[2] = 0;
-            }
-            if(number_of_connected_submodules_upper_arm == 2){
-                g[0] = 1;
-                g[1] = 1;
-                g[2] = 0;
-            }
-            if(number_of_connected_submodules_upper_arm == 3){
-                g[0] = 1;
-                g[1] = 1;
-                g[2] = 1;
-            }
-
-
-            /*
-            for(uint8_t counter=0;counter<N_modules;counter++){
-                gate_index = indexes[counter];
-                if (counter < seq_u[counter_seq])
-                {
-                    g[gate_index] = 1;
-                }
-            }
-                */
-
-            // gate_index = indexes[counter];
-            // if (counter < number_of_connected_submodules_upper_arm)
-            // {
-            //     g[gate_index] = 1;
-            // }
-            // counter=2;
-
-            // gate_index = indexes[counter];
-            // if (counter < number_of_connected_submodules_upper_arm)
-            // {
-            //     g[gate_index] = 1;
-            // }
-            // counter++;
-
-
-            // sorting();
-
-            index_1 = (float)indexes[0];  // recuperate
-            index_2 = (float)indexes[1];  // recuperate
-            index_3 = (float)indexes[2];  // recuperate
-            
-            
-            /*
-            for (uint8_t loops_gate = 0; loops_gate < N_modules; loops_gate++) {
-                uint8_t idx = indexes[loops_gate];      // now in [0..2]
-                g[idx] = (loops_gate < N_u) ? 1 : 0;
-            }
-            */
-            
+            index_1 = (float)modules_indexes[0];  // recuperate
+            index_2 = (float)modules_indexes[1];  // recuperate
+            index_3 = (float)modules_indexes[2];  // recuperate
 
             g_u_1 = (float)g[0];  // recuperate
             g_u_2 = (float)g[1];  // recuperate
