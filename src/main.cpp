@@ -64,9 +64,9 @@ float32_t duty_cycle = 0.3;
 /* Scope variables */
 
 static bool enable_acq; //trigger variable
-static const uint16_t NB_DATAS = 2048; //Number of data acquired
+static const uint16_t NB_DATAS = 1024; //Number of data acquired
 static const float32_t minimal_step = 1.0F / (float32_t) NB_DATAS;
-static ScopeMimicry scope(NB_DATAS, 5);
+static ScopeMimicry scope(NB_DATAS, 8);
 static bool is_downloading;
 
 /* SM switching variables */
@@ -84,15 +84,17 @@ static uint32_t sw_period = 10000; // 1 Hz = 1 s to transition;
 static uint32_t scope_period = 100; // acquire every 100 * 100 µs;
 
 /* CVB variables */
-static float32_t modules_capacitor_voltages[3] = {3.0,5.0,4.0}; // Example values to be sorted
-static uint8_t modules_indexes[3] = {0,1,2}; // Example indexes to be sorted
+static float32_t modules_capacitor_voltages_upper_arm[3] = {3.0,5.0,4.0}; // Example values to be sorted
+static uint8_t modules_indexes_upper_arm[3] = {0,1,2}; // Example indexes to be sorted
+static float32_t modules_capacitor_voltages_lower_arm[3] = {3.0,5.0,4.0}; // Example values to be sorted
+static uint8_t modules_indexes_lower_arm[3] = {0,1,2}; // Example indexes to be sorted
 static uint8_t total_number_of_modules_arm= 3;
-static float32_t index_1;
-static float32_t index_2;
-static float32_t index_3;
 
 /* Gate logic */
-uint8_t g[3] = {0,0,0}; // Example gate signals to send
+uint8_t g_u[3] = {0,0,0}; // Example gate signals to send
+uint8_t g_l[3] = {0,0,0}; // Example gate signals to send
+static int8_t i_upper_arm= 1;
+static int8_t i_lower_arm= -1;
 static float32_t g_u_1;
 static float32_t g_u_2;
 static float32_t g_u_3;
@@ -157,6 +159,9 @@ void setup_routine()
     scope.connectChannel(g_u_1, "g_u_1");
     scope.connectChannel(g_u_2, "g_u_2");
     scope.connectChannel(g_u_3, "g_u_3");
+    scope.connectChannel(g_l_1, "g_l_1");
+    scope.connectChannel(g_l_2, "g_l_2");
+    scope.connectChannel(g_l_3, "g_l_3");
     scope.set_trigger(&a_trigger);
     scope.set_delay(0.0F);
     scope.start();
@@ -238,12 +243,12 @@ void loop_application_task()
         printk("%1.f:", number_of_connected_submodules_lower_arm);
         printk("%u:", counter_seq);
         printk("%u:", sw_timer);
-        printk("%1.f:", index_1);
-        printk("%1.f:", index_2);
-        printk("%1.f:", index_3);
         printk("%u:", g_u_1);
         printk("%u:", g_u_2);
         printk("%u:", g_u_3);
+        printk("%u:", g_l_1);
+        printk("%u:", g_l_2);
+        printk("%u:", g_l_3);
         printk("\n");
     }
     task.suspendBackgroundMs(1000);
@@ -255,30 +260,66 @@ void sorting()
 {
     uint8_t counter_loops_sorting = 0;
     while(counter_loops_sorting < 10){ // Sorts modules indexes according to capacitor voltage
-            g[0] = 0;
-            g[1] = 0;
-            g[2] = 0;
             for(uint8_t counter = 0; counter < total_number_of_modules_arm-1; counter++)
             {
-                if(modules_capacitor_voltages[counter] > modules_capacitor_voltages[counter + 1])
+                if(modules_capacitor_voltages_upper_arm[counter] > modules_capacitor_voltages_upper_arm[counter + 1])
                 {
-                    float32_t temp = modules_capacitor_voltages[counter];
-                    modules_capacitor_voltages[counter] = modules_capacitor_voltages[counter + 1];
-                    modules_capacitor_voltages[counter + 1] = temp;
-                    float32_t temp2 = modules_indexes[counter];
-                    modules_indexes[counter] = modules_indexes[counter + 1];
-                    modules_indexes[counter + 1] = temp2;
+                    float32_t temp = modules_capacitor_voltages_upper_arm[counter];
+                    modules_capacitor_voltages_upper_arm[counter] = modules_capacitor_voltages_upper_arm[counter + 1];
+                    modules_capacitor_voltages_upper_arm[counter + 1] = temp;
+                    float32_t temp2 = modules_indexes_upper_arm[counter];
+                    modules_indexes_upper_arm[counter] = modules_indexes_upper_arm[counter + 1];
+                    modules_indexes_upper_arm[counter + 1] = temp2;
+                }
+
+                if(modules_capacitor_voltages_lower_arm[counter] > modules_capacitor_voltages_lower_arm[counter + 1])
+                {
+                    float32_t temp = modules_capacitor_voltages_lower_arm[counter];
+                    modules_capacitor_voltages_lower_arm[counter] = modules_capacitor_voltages_lower_arm[counter + 1];
+                    modules_capacitor_voltages_lower_arm[counter + 1] = temp;
+                    float32_t temp2 = modules_indexes_lower_arm[counter];
+                    modules_indexes_lower_arm[counter] = modules_indexes_lower_arm[counter + 1];
+                    modules_indexes_lower_arm[counter + 1] = temp2;
                 }
             }
 
             counter_loops_sorting++;
         }
+    g_u[0] = 0;
+    g_u[1] = 0;
+    g_u[2] = 0;
+    g_l[0] = 0;
+    g_l[1] = 0;
+    g_l[2] = 0;
+    
     for(uint8_t counter = 0; counter < total_number_of_modules_arm; counter++) // Choses the modules to connect according to sorted indexes
         {
             if(counter < number_of_connected_submodules_upper_arm)
                 {
-                     uint8_t index_smallest_voltage_capacitor = modules_indexes[counter];
-                     g[index_smallest_voltage_capacitor] = 1;
+                    if(i_upper_arm>=0)
+                    {
+                        uint8_t index_smallest_voltage_capacitor_upper_arm = modules_indexes_upper_arm[counter];
+                        g_u[index_smallest_voltage_capacitor_upper_arm] = 1;
+                    }
+                    else{
+                        uint8_t higher_index = total_number_of_modules_arm-1-counter;
+                        uint8_t index_highest_voltage_capacitor_upper_arm = modules_indexes_upper_arm[higher_index];
+                        g_u[index_highest_voltage_capacitor_upper_arm] = 1;
+                    }
+
+                }
+            if(counter < number_of_connected_submodules_lower_arm)
+                {
+                    if(i_lower_arm>=0)
+                    {
+                        uint8_t index_smallest_voltage_capacitor_lower_arm = modules_indexes_lower_arm[counter];
+                        g_l[index_smallest_voltage_capacitor_lower_arm] = 1;
+                    }
+                    else{
+                        uint8_t higher_index = total_number_of_modules_arm-1-counter;
+                        uint8_t index_highest_voltage_capacitor_lower_arm = modules_indexes_lower_arm[higher_index];
+                        g_l[index_highest_voltage_capacitor_lower_arm] = 1;
+                    }
                 }
         }
 
@@ -319,9 +360,13 @@ void loop_critical_task()
 
         sorting();
 
-        g_u_1 = (float)g[0];  // recuperate for scope acquisition
-        g_u_2 = (float)g[1];  // recuperate for scope acquisition
-        g_u_3 = (float)g[2];  // recuperate for scope acquisition
+        g_u_1 = (float)g_u[0];  // recuperate for scope acquisition
+        g_u_2 = (float)g_u[1];  // recuperate for scope acquisition
+        g_u_3 = (float)g_u[2];  // recuperate for scope acquisition
+
+        g_l_1 = (float)g_l[0];  // recuperate for scope acquisition
+        g_l_2 = (float)g_l[1];  // recuperate for scope acquisition
+        g_l_3 = (float)g_l[2];  // recuperate for scope acquisition
         
         if (scope_timer == scope_period)
         {
