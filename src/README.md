@@ -82,7 +82,7 @@ After the #LEAD starts the transmission, the reception_function is used in the r
 
 ## Expected result
 
-First Build and Upload the code into the board.
+First Build and Upload the code into the 4 boards changing the variable module_ID to MMC_LEAD, MMC_SM1, MMC_SM2 or MMC_SM3 according to the board function.
 
 You can control the mode through platformio serial monitor. The image below shows you a snippet of the window and the button to press.
 
