@@ -51,7 +51,7 @@ The CVB algorithm is used in the MMC control in order to create a preference ord
 
 This algorithm is extremely important since the module main element, the capacitor charges and discharges according to the current as seen in the image below for a half-bridge module (HB).
 
-![HB module states](Image/HB states.png)
+![HB module states](Image/HB_states.png)
 
 Therefore, if the connection order is random, the voltage of the modules in one arm are going to have different values every time, which is not good for the converter operation. So, we use the CVB algorithm to sort the modules according to is capacitor voltages with the objective of maintaining all modules within one arm in the same mean voltage level.
 
