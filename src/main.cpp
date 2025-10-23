@@ -137,11 +137,23 @@ static inline uint16_t mmc_encode_voltage(float32_t voltage)
     return static_cast<uint16_t>(raw);
 }
 
+/**
+ * @brief Decode a raw capacitor voltage value from an MMC frame.
+ *
+ * @param raw 12-bit encoded capacitor voltage.
+ * @return Physical capacitor voltage in volts.
+ */
 static inline float32_t mmc_decode_voltage(uint16_t raw)
 {
     return (Cap_voltage_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F;
 }
 
+/**
+ * @brief Encode an arm current into the 12-bit transport format.
+ *
+ * @param current Physical arm current in amperes.
+ * @return 12-bit encoded current suitable for MMC frames.
+ */
 static inline uint16_t mmc_encode_current(float32_t current)
 {
     float32_t shifted = current + Arm_current_OFFSET;
@@ -157,6 +169,12 @@ static inline uint16_t mmc_encode_current(float32_t current)
     return static_cast<uint16_t>(raw);
 }
 
+/**
+ * @brief Decode a raw arm current value from an MMC frame.
+ *
+ * @param raw 12-bit encoded arm current.
+ * @return Physical arm current in amperes.
+ */
 static inline float32_t mmc_decode_current(uint16_t raw)
 {
     return ((Arm_current_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F) - Arm_current_OFFSET;
@@ -185,13 +203,14 @@ static bool change_state_command = false; // Flag to change the state of the com
 static bool send_idle = false;            // Flag to send idle command from master to followers
 
 /**
- * This is a structure that defines the frame
- * that will be sent and received through the RS485 communication.
- * sm_insertion packs 10 individual insertion flags (1 bit each).
- * capacitor_voltage_raw stores the capacitor voltage encoded on 12 bits.
- * arm_current_raw stores the arm current encoded on 12 bits.
- * status packs 10 individual 3-bit error codes and the arm selection flag.
- * sm_id identifies the source submodule (byte-sized).
+ * @brief Frame exchanged over the RS485 communication bus.
+ *
+ * Structure overview:
+ * - `sm_insertion`: bit-packed insertion flags for each submodule.
+ * - `capacitor_voltage_raw`: 12-bit encoded capacitor voltage.
+ * - `arm_current_raw`: 12-bit encoded arm current.
+ * - `status`: bit-packed error codes plus the arm selection flag.
+ * - `sm_id`: identifier of the sender (lead or submodule index).
  */
 struct MMC_frame
 {
@@ -241,36 +260,79 @@ constexpr uint8_t MMC_STATUS_BITS_PER_SM = 3;
 constexpr uint8_t MMC_STATUS_UPPER_ARM_SHIFT = MMC_STATUS_BITS_PER_SM * MMC_SM_COUNT;
 constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_UPPER_ARM_SHIFT);
 
+/**
+ * @brief Store an encoded capacitor voltage value inside an MMC frame.
+ *
+ * @param frame Frame that will carry the voltage information.
+ * @param raw 12-bit raw voltage to write into the frame.
+ */
 static inline void mmc_frame_set_voltage_raw(MMC_frame_t &frame, uint16_t raw)
 {
     frame.capacitor_voltage_raw = static_cast<uint16_t>(raw & 0x0FFFU);
 }
 
+/**
+ * @brief Get the encoded capacitor voltage contained in an MMC frame.
+ *
+ * @param frame Frame that carries the voltage information.
+ * @return 12-bit raw capacitor voltage.
+ */
 static inline uint16_t mmc_frame_get_voltage_raw(const MMC_frame_t &frame)
 {
     return static_cast<uint16_t>(frame.capacitor_voltage_raw & 0x0FFFU);
 }
 
+/**
+ * @brief Store an encoded arm current value inside an MMC frame.
+ *
+ * @param frame Frame that will carry the current information.
+ * @param raw 12-bit raw current to write into the frame.
+ */
 static inline void mmc_frame_set_current_raw(MMC_frame_t &frame, uint16_t raw)
 {
     frame.arm_current_raw = static_cast<uint16_t>(raw & 0x0FFFU);
 }
 
+/**
+ * @brief Get the encoded arm current contained in an MMC frame.
+ *
+ * @param frame Frame that carries the current information.
+ * @return 12-bit raw arm current.
+ */
 static inline uint16_t mmc_frame_get_current_raw(const MMC_frame_t &frame)
 {
     return static_cast<uint16_t>(frame.arm_current_raw & 0x0FFFU);
 }
 
+/**
+ * @brief Set the submodule identifier associated with an MMC frame.
+ *
+ * @param frame Frame to update.
+ * @param id Identifier of the sender (lead or submodule).
+ */
 static inline void mmc_frame_set_sm_identifier(MMC_frame_t &frame, uint8_t id)
 {
     frame.sm_id = id;
 }
 
+/**
+ * @brief Read the submodule identifier stored inside an MMC frame.
+ *
+ * @param frame Frame to inspect.
+ * @return Sender identifier extracted from the frame.
+ */
 static inline uint8_t mmc_frame_get_sm_identifier(const MMC_frame_t &frame)
 {
     return frame.sm_id;
 }
 
+/**
+ * @brief Update the insertion flag for a given submodule in an MMC frame.
+ *
+ * @param frame Frame to modify.
+ * @param sm_index Submodule identifier to update.
+ * @param inserted Set to true if the submodule is inserted.
+ */
 static inline void mmc_frame_set_sm_inserted(MMC_frame_t &frame, uint8_t sm_index, bool inserted)
 {
     if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
@@ -289,6 +351,13 @@ static inline void mmc_frame_set_sm_inserted(MMC_frame_t &frame, uint8_t sm_inde
     }
 }
 
+/**
+ * @brief Check whether a submodule is marked as inserted in an MMC frame.
+ *
+ * @param frame Frame to inspect.
+ * @param sm_index Submodule identifier to check.
+ * @return True when the insertion flag is set, false otherwise.
+ */
 static inline bool mmc_frame_get_sm_inserted(const MMC_frame_t &frame, uint8_t sm_index)
 {
     if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
@@ -300,6 +369,13 @@ static inline bool mmc_frame_get_sm_inserted(const MMC_frame_t &frame, uint8_t s
     return (frame.sm_insertion.raw & mask) != 0U;
 }
 
+/**
+ * @brief Set the error code associated with a submodule in the MMC frame.
+ *
+ * @param frame Frame to modify.
+ * @param sm_index Submodule identifier to update.
+ * @param code 3-bit error code to assign.
+ */
 static inline void mmc_frame_set_sm_error_code(MMC_frame_t &frame, uint8_t sm_index, uint8_t code)
 {
     if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
@@ -312,6 +388,13 @@ static inline void mmc_frame_set_sm_error_code(MMC_frame_t &frame, uint8_t sm_in
     frame.status.raw |= (static_cast<uint32_t>(code & 0x7U) << shift);
 }
 
+/**
+ * @brief Retrieve the error code associated with a submodule from an MMC frame.
+ *
+ * @param frame Frame to inspect.
+ * @param sm_index Submodule identifier to read.
+ * @return 3-bit error code stored in the frame.
+ */
 static inline uint8_t mmc_frame_get_sm_error_code(const MMC_frame_t &frame, uint8_t sm_index)
 {
     if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
@@ -323,6 +406,12 @@ static inline uint8_t mmc_frame_get_sm_error_code(const MMC_frame_t &frame, uint
     return static_cast<uint8_t>((frame.status.raw & mask) >> shift);
 }
 
+/**
+ * @brief Mark whether the frame data describes the upper arm.
+ *
+ * @param frame Frame to update.
+ * @param is_upper_arm True when the frame belongs to the upper arm.
+ */
 static inline void mmc_frame_set_upper_arm_flag(MMC_frame_t &frame, bool is_upper_arm)
 {
     if (is_upper_arm)
@@ -335,11 +424,23 @@ static inline void mmc_frame_set_upper_arm_flag(MMC_frame_t &frame, bool is_uppe
     }
 }
 
+/**
+ * @brief Determine whether the MMC frame is associated with the upper arm.
+ *
+ * @param frame Frame to inspect.
+ * @return True when the upper arm flag is set, false otherwise.
+ */
 static inline bool mmc_frame_is_upper_arm(const MMC_frame_t &frame)
 {
     return (frame.status.raw & MMC_STATUS_UPPER_ARM_MASK) != 0U;
 }
 
+/**
+ * @brief Determine if a module identifier corresponds to the upper arm.
+ *
+ * @param id Module identifier under test.
+ * @return True when the module belongs to the upper arm side.
+ */
 static inline bool mmc_is_upper_arm_module(uint8_t id)
 {
     if (id == MMC_LEAD)
@@ -701,6 +802,17 @@ void loop_background_task()
 {
     if (module_ID == MMC_LEAD)
     {
+        printk("COM bus measurements\n");
+        printk("Lead  : V=%0.2f V I=%0.2f A\n", (double)Cap_voltage, (double)Arm_current);
+        for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
+        {
+            const uint8_t index = static_cast<uint8_t>(sm - MMC_SM_FIRST);
+            printk("SM%u : V=%0.2f V I=%0.2f A\n",
+                   sm,
+                   (double)MMC_capacitor_voltage[index],
+                   (double)MMC_arm_current[index]);
+        }
+        
         if (mode == IDLEMODE)
         {
             spin.led.turnOff();
