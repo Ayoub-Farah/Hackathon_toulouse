@@ -70,6 +70,47 @@
  */
 #define GET_SIGNAL(cmd, id) (((cmd) >> (id)) & 0x01)
 
+/* -------------- BOARD IDENTIFICATION ----------------------- */
+
+/* TODO: Replace dummy UIDs with actual board identifiers when available. */
+constexpr uint32_t UID_MMC_LEAD_BOARD = 0x11112222;
+constexpr uint32_t UID_MMC_SM1_BOARD = 0x11113333;
+constexpr uint32_t UID_MMC_SM2_BOARD = 0x11114444;
+constexpr uint32_t UID_MMC_SM3_BOARD = 0x11115555;
+constexpr uint32_t UID_MMC_SM4_BOARD = 0x11116666;
+constexpr uint32_t UID_MMC_SM5_BOARD = 0x11117777;
+constexpr uint32_t UID_MMC_SM6_BOARD = 0x11118888;
+
+static uint32_t read_board_uid()
+{
+    static volatile uint32_t *const uid0 =
+        reinterpret_cast<volatile uint32_t *>(0x1FFF7590UL);
+    return *uid0;
+}
+
+static uint8_t detect_module_id()
+{
+    switch (read_board_uid())
+    {
+    case UID_MMC_LEAD_BOARD:
+        return MMC_LEAD;
+    case UID_MMC_SM1_BOARD:
+        return MMC_SM1;
+    case UID_MMC_SM2_BOARD:
+        return MMC_SM2;
+    case UID_MMC_SM3_BOARD:
+        return MMC_SM3;
+    case UID_MMC_SM4_BOARD:
+        return MMC_SM4;
+    case UID_MMC_SM5_BOARD:
+        return MMC_SM5;
+    case UID_MMC_SM6_BOARD:
+        return MMC_SM6;
+    default:
+        return MMC_SM1;
+    }
+}
+
 /* --------------SETUP FUNCTIONS DECLARATION------------------- */
 
 /* Setups the hardware and software of the system */
@@ -84,8 +125,8 @@ void loop_critical_task();
 
 /* --------------USER VARIABLES DECLARATIONS------------------- */
 
-/* TODO : Define module_ID depending on the ID of the board */
-uint8_t module_ID = MMC_SM1; // The ID of the module, can be set to MMC_LEAD or any other SMx
+/* Auto-detected module ID (uses dummy UIDs for now). */
+uint8_t module_ID = detect_module_id(); // The ID of the module, can be set to MMC_LEAD or any other SMx
 
 static uint8_t module_comand; // The command the followers needs to apply
 static uint8_t module_command_past;
@@ -328,6 +369,7 @@ void reception_function(void)
  */
 void setup_routine()
 {
+    master = (module_ID == MMC_LEAD);
 
     config_led_LL(); // Configure the LED pin in Low Level
 
