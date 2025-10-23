@@ -29,6 +29,7 @@
 #include "SpinAPI.h"
 #include "TaskAPI.h"
 #include "ShieldAPI.h"
+#include "DataAPI.h"
 #include "CommunicationAPI.h"
 
 /*--------------OWNTECH Libraries----------------------------- */
@@ -53,17 +54,23 @@
 #define MMC_SM9 9
 #define MMC_SM10 10
 
+#define IDLE 0
+#define POWER 1
+#define LEAD_ERROR 2
+#define OVER_VOLTAGE 3
+#define UNDER_VOLTAGE 4
+#define OVER_CURRENT 5
+
 constexpr uint8_t MMC_SM_COUNT = 10;
 constexpr uint8_t MMC_SM_FIRST = MMC_SM1;
 constexpr uint8_t MMC_SM_LAST = MMC_SM10;
 
 /* -------------- BOARD IDENTIFICATION ----------------------- */
 
-/* TODO: Replace dummy UIDs with actual board identifiers when available. */
-constexpr uint32_t UID_MMC_LEAD_BOARD = 0x11112222;
-constexpr uint32_t UID_MMC_SM1_BOARD = 0x11113333;
-constexpr uint32_t UID_MMC_SM2_BOARD = 0x11114444;
-constexpr uint32_t UID_MMC_SM3_BOARD = 0x11115555;
+constexpr uint32_t UID_MMC_LEAD_BOARD = 0x00270050;
+constexpr uint32_t UID_MMC_SM1_BOARD = 0x002A004B;
+constexpr uint32_t UID_MMC_SM2_BOARD = 0x002A004D;
+constexpr uint32_t UID_MMC_SM3_BOARD = 0x002B0043;
 constexpr uint32_t UID_MMC_SM4_BOARD = 0x11116666;
 constexpr uint32_t UID_MMC_SM5_BOARD = 0x11117777;
 constexpr uint32_t UID_MMC_SM6_BOARD = 0x11118888;
@@ -112,11 +119,13 @@ static uint8_t detect_module_id()
 
 /* -------------- DATA PACKING HELPERS ----------------------- */
 
-constexpr float32_t MMC_VOLTAGE_SCALE = 50.0F;
+constexpr float32_t Cap_voltage_SCALE = 50.0F;
+constexpr float32_t Arm_current_SCALE = 50.0F;
+constexpr float32_t Arm_current_OFFSET = 25.0F;
 
 static inline uint16_t mmc_encode_voltage(float32_t voltage)
 {
-    int32_t raw = static_cast<int32_t>((voltage * 4095.0F) / MMC_VOLTAGE_SCALE);
+    int32_t raw = static_cast<int32_t>((voltage * 4095.0F) / Cap_voltage_SCALE);
     if (raw < 0)
     {
         raw = 0;
@@ -130,7 +139,27 @@ static inline uint16_t mmc_encode_voltage(float32_t voltage)
 
 static inline float32_t mmc_decode_voltage(uint16_t raw)
 {
-    return (MMC_VOLTAGE_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F;
+    return (Cap_voltage_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F;
+}
+
+static inline uint16_t mmc_encode_current(float32_t current)
+{
+    float32_t shifted = current + Arm_current_OFFSET;
+    int32_t raw = static_cast<int32_t>((shifted * 4095.0F) / Arm_current_SCALE);
+    if (raw < 0)
+    {
+        raw = 0;
+    }
+    if (raw > 0x0FFF)
+    {
+        raw = 0x0FFF;
+    }
+    return static_cast<uint16_t>(raw);
+}
+
+static inline float32_t mmc_decode_current(uint16_t raw)
+{
+    return ((Arm_current_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F) - Arm_current_OFFSET;
 }
 
 /* --------------SETUP FUNCTIONS DECLARATION------------------- */
@@ -329,13 +358,32 @@ static MMC_frame_t dataTX_mmc;
 static MMC_frame_t dataRX_mmc;
 
 float32_t MMC_capacitor_voltage[MMC_SM_COUNT];
+float32_t MMC_arm_current[MMC_SM_COUNT];
 
 constexpr size_t MMC_FRAME_SIZE = sizeof(MMC_frame_t);
 
 uint8_t buffer_tx[MMC_FRAME_SIZE];
 uint8_t buffer_rx[MMC_FRAME_SIZE];
 
-float32_t MMC_voltage = 0.0f;
+float32_t Cap_voltage = 0.0f;
+static float32_t Arm_current = 0.0f;
+
+static void update_measurements(void)
+{
+    float32_t latest = data.getLatest(V_HIGH);
+    if (latest != NO_VALUE)
+    {
+        V_high = latest;
+        Cap_voltage = V_high;
+    }
+
+    latest = data.getLatest(I1_LOW);
+    if (latest != NO_VALUE)
+    {
+        I1_low_value = latest;
+        Arm_current = I1_low_value;
+    }
+}
 
 uint32_t counter_timer = 0;
 uint32_t counter_receive = 0;
@@ -502,8 +550,11 @@ void reception_function(void)
     {
         if ((sender_id >= MMC_SM_FIRST) && (sender_id <= MMC_SM_LAST))
         {
-            MMC_capacitor_voltage[sender_id - MMC_SM_FIRST] =
+            const uint8_t index = sender_id - MMC_SM_FIRST;
+            MMC_capacitor_voltage[index] =
                 mmc_decode_voltage(mmc_frame_get_voltage_raw(dataRX_mmc));
+            MMC_arm_current[index] =
+                mmc_decode_current(mmc_frame_get_current_raw(dataRX_mmc));
         }
     }
 
@@ -511,11 +562,11 @@ void reception_function(void)
     {
         if (sender_id == MMC_LEAD)
         {
-            /* retrievig command from lead message*/
+            /* retrieving command from lead message*/
             module_comand = static_cast<uint8_t>(
                 mmc_frame_get_sm_inserted(dataRX_mmc, module_ID));
             /* retrieving status */
-            if (mmc_frame_get_sm_error_code(dataRX_mmc, module_ID) != 0U)
+            if (mmc_frame_get_sm_error_code(dataRX_mmc, module_ID) == POWER)
             {
                 mode = POWERMODE;
             }
@@ -533,12 +584,11 @@ void reception_function(void)
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_voltage_raw(dataTX_mmc,
-                                      mmc_encode_voltage(MMC_voltage)); /* TODO: replace MMC_voltage with measured value */
-            if (mode == POWERMODE)
-            {
-                memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
-                communication.rs485.startTransmission();
-            }
+                                      mmc_encode_voltage(Cap_voltage));
+            mmc_frame_set_current_raw(dataTX_mmc,
+                                      mmc_encode_current(Arm_current));
+            memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
+            communication.rs485.startTransmission();
         }
     }
     counter_receive++;
@@ -555,6 +605,8 @@ void reception_function(void)
  */
 void setup_routine()
 {
+    const uint32_t board_uid = read_board_uid();
+    printk("Board UID: 0x%08" PRIX32 "\n", board_uid);
     master = (module_ID == MMC_LEAD);
 
     config_led_LL(); // Configure the LED pin in Low Level
@@ -568,12 +620,12 @@ void setup_routine()
     task.createCritical(loop_critical_task, 100);
 
     shield.sensors.enableDefaultTwistSensors();
+    data.enableTwistDefaultChannels();
 
     /* Finally, start tasks */
     task.startBackground(background_task_number);
     /* Uncomment following line if you use the critical task */
     task.startCritical();
-
     CommTask_num = task.createBackground(loop_communication_task);
     task.startBackground(CommTask_num);
 
@@ -668,9 +720,9 @@ void loop_background_task()
             printk("%1.f:", index_1);
             printk("%1.f:", index_2);
             printk("%1.f:", index_3);
-            printk("%u:", g_u_1);
-            printk("%u:", g_u_2);
-            printk("%u:", g_u_3);
+            printk("%u:", (unsigned int)g_u_1);
+            printk("%u:", (unsigned int)g_u_2);
+            printk("%u:", (unsigned int)g_u_3);
             printk("\n");
         }
     }
@@ -698,6 +750,8 @@ void loop_background_task()
  */
 void loop_critical_task()
 {
+    update_measurements();
+
     if (mode == POWERMODE)
     {
         /* The lead sends commands to the followers */
@@ -762,13 +816,12 @@ void loop_critical_task()
             mmc_frame_set_sm_inserted(dataTX_mmc, MMC_SM3, g[2] != 0U);
 
             dataTX_mmc.status.raw = 0U;
-            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
-            {
-                mmc_frame_set_sm_error_code(dataTX_mmc, sm, 1U);
-            }
+
+            mmc_frame_set_sm_error_code(dataTX_mmc, module_ID, POWER);
             mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
-            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
+            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
+            mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
         }
@@ -807,11 +860,12 @@ void loop_critical_task()
             dataTX_mmc.status.raw = 0U;
             for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
             {
-                mmc_frame_set_sm_error_code(dataTX_mmc, sm, 0U);
+                mmc_frame_set_sm_error_code(dataTX_mmc, module_ID, IDLE);
             }
             mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
-            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
+            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
+            mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
             send_idle = true; // Set the flag to send idle command
