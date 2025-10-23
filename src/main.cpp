@@ -35,6 +35,7 @@
 #include "pid.h"
 #include "arm_math_types.h"
 #include <ScopeMimicry.h>
+#include <cstddef>
 
 /*-- Zephyr includes --*/
 #include "zephyr/console/console.h"
@@ -111,6 +112,29 @@ static uint8_t detect_module_id()
     }
 }
 
+/* -------------- DATA PACKING HELPERS ----------------------- */
+
+constexpr float32_t MMC_VOLTAGE_SCALE = 50.0F;
+
+static inline uint16_t mmc_encode_voltage(float32_t voltage)
+{
+    int32_t raw = static_cast<int32_t>((voltage * 4095.0F) / MMC_VOLTAGE_SCALE);
+    if (raw < 0)
+    {
+        raw = 0;
+    }
+    if (raw > 0x0FFF)
+    {
+        raw = 0x0FFF;
+    }
+    return static_cast<uint16_t>(raw);
+}
+
+static inline float32_t mmc_decode_voltage(uint16_t raw)
+{
+    return (MMC_VOLTAGE_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F;
+}
+
 /* --------------SETUP FUNCTIONS DECLARATION------------------- */
 
 /* Setups the hardware and software of the system */
@@ -137,25 +161,69 @@ static bool send_idle = false;            // Flag to send idle command from mast
  * This is a structure that defines the frame
  * that will be sent and received through the RS485 communication.
  * command is a byte that contains the state of the signals
- * Capacitor_Voltage is the voltage of the capacitor
- * ID is the ID of the module
+ * capacitor_voltage_raw stores the capacitor voltage encoded on 12 bits
+ * arm_current_raw stores the arm current encoded on 12 bits
+ * status_and_id packs the module status (high nibble) and ID (low nibble)
  */
 struct MMC_frame
 {
     uint8_t command;
-    float32_t Capacitor_Voltage;
-    uint8_t status;
-    uint8_t ID;
+    uint16_t capacitor_voltage_raw:12;
+    uint16_t arm_current_raw:12;
+    uint8_t status_and_id;
 } __packed;
 
 typedef MMC_frame MMC_frame_t;
+
+static inline void mmc_frame_set_id(MMC_frame_t &frame, uint8_t id)
+{
+    frame.status_and_id = static_cast<uint8_t>((frame.status_and_id & 0xF0U) | (id & 0x0FU));
+}
+
+static inline uint8_t mmc_frame_get_id(const MMC_frame_t &frame)
+{
+    return static_cast<uint8_t>(frame.status_and_id & 0x0FU);
+}
+
+static inline void mmc_frame_set_status(MMC_frame_t &frame, uint8_t status)
+{
+    frame.status_and_id = static_cast<uint8_t>(((status & 0x0FU) << 4) | (frame.status_and_id & 0x0FU));
+}
+
+static inline uint8_t mmc_frame_get_status(const MMC_frame_t &frame)
+{
+    return static_cast<uint8_t>((frame.status_and_id >> 4) & 0x0FU);
+}
+
+static inline void mmc_frame_set_voltage_raw(MMC_frame_t &frame, uint16_t raw)
+{
+    frame.capacitor_voltage_raw = static_cast<uint16_t>(raw & 0x0FFFU);
+}
+
+static inline uint16_t mmc_frame_get_voltage_raw(const MMC_frame_t &frame)
+{
+    return static_cast<uint16_t>(frame.capacitor_voltage_raw & 0x0FFFU);
+}
+
+static inline void mmc_frame_set_current_raw(MMC_frame_t &frame, uint16_t raw)
+{
+    frame.arm_current_raw = static_cast<uint16_t>(raw & 0x0FFFU);
+}
+
+static inline uint16_t mmc_frame_get_current_raw(const MMC_frame_t &frame)
+{
+    return static_cast<uint16_t>(frame.arm_current_raw & 0x0FFFU);
+}
+
 static MMC_frame_t dataTX_mmc;
 static MMC_frame_t dataRX_mmc;
 
 float32_t MMC_capacitor_voltage[6];
 
-uint8_t buffer_tx[7];
-uint8_t buffer_rx[7];
+constexpr size_t MMC_FRAME_SIZE = sizeof(MMC_frame_t);
+
+uint8_t buffer_tx[MMC_FRAME_SIZE];
+uint8_t buffer_rx[MMC_FRAME_SIZE];
 
 float32_t MMC_voltage = 0.0f;
 
@@ -318,20 +386,25 @@ void dump_scope_datas(ScopeMimicry &scope)
 void reception_function(void)
 {
     dataRX_mmc = *(MMC_frame_t *)buffer_rx;
+    uint8_t sender_id = mmc_frame_get_id(dataRX_mmc);
 
     if (module_ID == MMC_LEAD)
     {
-        MMC_capacitor_voltage[dataRX_mmc.ID - 1] = dataRX_mmc.Capacitor_Voltage;
+        if ((sender_id >= MMC_SM1) && (sender_id <= MMC_SM6))
+        {
+            MMC_capacitor_voltage[sender_id - 1] =
+                mmc_decode_voltage(mmc_frame_get_voltage_raw(dataRX_mmc));
+        }
     }
 
     else
     {
-        if (dataRX_mmc.ID == MMC_LEAD)
+        if (sender_id == MMC_LEAD)
         {
             /* retrievig command from lead message*/
             module_comand = GET_SIGNAL(dataRX_mmc.command, module_ID);
             /* retrieving status */
-            if (dataRX_mmc.status == 1)
+            if (mmc_frame_get_status(dataRX_mmc) == 1)
             {
                 mode = POWERMODE;
             }
@@ -343,11 +416,12 @@ void reception_function(void)
 
         /* The board following the ID of the one who sent will start sending
             the next message */
-        if ((dataRX_mmc.ID == module_ID - 1))
+        if (sender_id == static_cast<uint8_t>(module_ID - 1))
         {
             dataTX_mmc = dataRX_mmc; // Copy the received data to the transmission data
-            dataTX_mmc.ID = module_ID;
-            dataTX_mmc.Capacitor_Voltage = MMC_voltage; /* TODO :uncomment when we get the voltage */
+            mmc_frame_set_id(dataTX_mmc, module_ID);
+            mmc_frame_set_voltage_raw(dataTX_mmc,
+                                      mmc_encode_voltage(MMC_voltage)); /* TODO: replace MMC_voltage with measured value */
             if (mode == POWERMODE)
             {
                 memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
@@ -574,9 +648,10 @@ void loop_critical_task()
             SET_SIGNAL(dataTX_mmc.command, MMC_SM2, g[1]);
             SET_SIGNAL(dataTX_mmc.command, MMC_SM3, g[2]);
 
-            dataTX_mmc.ID = module_ID;
+            mmc_frame_set_id(dataTX_mmc, module_ID);
+            mmc_frame_set_status(dataTX_mmc, 1);
+            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
-            dataTX_mmc.status = 1;
             communication.rs485.startTransmission();
         }
         else
@@ -610,8 +685,9 @@ void loop_critical_task()
         /* Made to send IDLE flag only once */
         if (!send_idle)
         {
-            dataTX_mmc.ID = module_ID;
-            dataTX_mmc.status = 0;
+            mmc_frame_set_id(dataTX_mmc, module_ID);
+            mmc_frame_set_status(dataTX_mmc, 0);
+            mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
             send_idle = true; // Set the flag to send idle command
