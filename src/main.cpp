@@ -36,6 +36,7 @@
 #include "arm_math_types.h"
 #include <ScopeMimicry.h>
 #include <cstddef>
+#include <cstdint>
 
 /*-- Zephyr includes --*/
 #include "zephyr/console/console.h"
@@ -47,29 +48,14 @@
 #define MMC_SM4 4
 #define MMC_SM5 5
 #define MMC_SM6 6
+#define MMC_SM7 7
+#define MMC_SM8 8
+#define MMC_SM9 9
+#define MMC_SM10 10
 
-/**
- * @brief This function is considering a byte called 'cmd'
- *        which can turn on or off signals.
- *        The signals are identified by their 'id'.
- *        The value 'val' is used to set the signal:
- *        - if val is true, the signal is set to 1
- *        - if val is false, the signal is set to 0
- */
-#define SET_SIGNAL(cmd, id, val)   \
-    do                             \
-    {                              \
-        if (val)                   \
-            (cmd) |= (1 << (id));  \
-        else                       \
-            (cmd) &= ~(1 << (id)); \
-    } while (0)
-
-/**
- * @brief This function is to get the turn on/off state of a signal
- *        identified by its 'id' from a byte called 'cmd'.
- */
-#define GET_SIGNAL(cmd, id) (((cmd) >> (id)) & 0x01)
+constexpr uint8_t MMC_SM_COUNT = 10;
+constexpr uint8_t MMC_SM_FIRST = MMC_SM1;
+constexpr uint8_t MMC_SM_LAST = MMC_SM10;
 
 /* -------------- BOARD IDENTIFICATION ----------------------- */
 
@@ -81,6 +67,10 @@ constexpr uint32_t UID_MMC_SM3_BOARD = 0x11115555;
 constexpr uint32_t UID_MMC_SM4_BOARD = 0x11116666;
 constexpr uint32_t UID_MMC_SM5_BOARD = 0x11117777;
 constexpr uint32_t UID_MMC_SM6_BOARD = 0x11118888;
+constexpr uint32_t UID_MMC_SM7_BOARD = 0x11119999;
+constexpr uint32_t UID_MMC_SM8_BOARD = 0x1111AAA0;
+constexpr uint32_t UID_MMC_SM9_BOARD = 0x1111BBB1;
+constexpr uint32_t UID_MMC_SM10_BOARD = 0x1111CCC2;
 
 static uint32_t read_board_uid()
 {
@@ -107,6 +97,14 @@ static uint8_t detect_module_id()
         return MMC_SM5;
     case UID_MMC_SM6_BOARD:
         return MMC_SM6;
+    case UID_MMC_SM7_BOARD:
+        return MMC_SM7;
+    case UID_MMC_SM8_BOARD:
+        return MMC_SM8;
+    case UID_MMC_SM9_BOARD:
+        return MMC_SM9;
+    case UID_MMC_SM10_BOARD:
+        return MMC_SM10;
     default:
         return MMC_SM1;
     }
@@ -160,40 +158,59 @@ static bool send_idle = false;            // Flag to send idle command from mast
 /**
  * This is a structure that defines the frame
  * that will be sent and received through the RS485 communication.
- * command is a byte that contains the state of the signals
- * capacitor_voltage_raw stores the capacitor voltage encoded on 12 bits
- * arm_current_raw stores the arm current encoded on 12 bits
- * status_and_id packs the module status (high nibble) and ID (low nibble)
+ * sm_insertion packs 10 individual insertion flags (1 bit each).
+ * capacitor_voltage_raw stores the capacitor voltage encoded on 12 bits.
+ * arm_current_raw stores the arm current encoded on 12 bits.
+ * status packs 10 individual 3-bit error codes and the arm selection flag.
+ * sm_id identifies the source submodule (byte-sized).
  */
 struct MMC_frame
 {
-    uint8_t command;
-    uint16_t capacitor_voltage_raw:12;
-    uint16_t arm_current_raw:12;
-    uint8_t status_and_id;
+    union
+    {
+        uint16_t raw;
+        struct
+        {
+            uint16_t sm1_inserted : 1;
+            uint16_t sm2_inserted : 1;
+            uint16_t sm3_inserted : 1;
+            uint16_t sm4_inserted : 1;
+            uint16_t sm5_inserted : 1;
+            uint16_t sm6_inserted : 1;
+            uint16_t sm7_inserted : 1;
+            uint16_t sm8_inserted : 1;
+            uint16_t sm9_inserted : 1;
+            uint16_t sm10_inserted : 1;
+        } bits;
+    } sm_insertion;
+    uint16_t capacitor_voltage_raw : 12;
+    uint16_t arm_current_raw : 12;
+    union
+    {
+        uint32_t raw;
+        struct
+        {
+            uint32_t sm1_error_code : 3;
+            uint32_t sm2_error_code : 3;
+            uint32_t sm3_error_code : 3;
+            uint32_t sm4_error_code : 3;
+            uint32_t sm5_error_code : 3;
+            uint32_t sm6_error_code : 3;
+            uint32_t sm7_error_code : 3;
+            uint32_t sm8_error_code : 3;
+            uint32_t sm9_error_code : 3;
+            uint32_t sm10_error_code : 3;
+            uint32_t upper_arm_frame : 1;
+        } bits;
+    } status;
+    uint8_t sm_id;
 } __packed;
 
 typedef MMC_frame MMC_frame_t;
 
-static inline void mmc_frame_set_id(MMC_frame_t &frame, uint8_t id)
-{
-    frame.status_and_id = static_cast<uint8_t>((frame.status_and_id & 0xF0U) | (id & 0x0FU));
-}
-
-static inline uint8_t mmc_frame_get_id(const MMC_frame_t &frame)
-{
-    return static_cast<uint8_t>(frame.status_and_id & 0x0FU);
-}
-
-static inline void mmc_frame_set_status(MMC_frame_t &frame, uint8_t status)
-{
-    frame.status_and_id = static_cast<uint8_t>(((status & 0x0FU) << 4) | (frame.status_and_id & 0x0FU));
-}
-
-static inline uint8_t mmc_frame_get_status(const MMC_frame_t &frame)
-{
-    return static_cast<uint8_t>((frame.status_and_id >> 4) & 0x0FU);
-}
+constexpr uint8_t MMC_STATUS_BITS_PER_SM = 3;
+constexpr uint8_t MMC_STATUS_UPPER_ARM_SHIFT = MMC_STATUS_BITS_PER_SM * MMC_SM_COUNT;
+constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_UPPER_ARM_SHIFT);
 
 static inline void mmc_frame_set_voltage_raw(MMC_frame_t &frame, uint16_t raw)
 {
@@ -215,10 +232,103 @@ static inline uint16_t mmc_frame_get_current_raw(const MMC_frame_t &frame)
     return static_cast<uint16_t>(frame.arm_current_raw & 0x0FFFU);
 }
 
+static inline void mmc_frame_set_sm_identifier(MMC_frame_t &frame, uint8_t id)
+{
+    frame.sm_id = id;
+}
+
+static inline uint8_t mmc_frame_get_sm_identifier(const MMC_frame_t &frame)
+{
+    return frame.sm_id;
+}
+
+static inline void mmc_frame_set_sm_inserted(MMC_frame_t &frame, uint8_t sm_index, bool inserted)
+{
+    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
+    {
+        return;
+    }
+    uint8_t shift = static_cast<uint8_t>(sm_index - MMC_SM_FIRST);
+    uint16_t mask = static_cast<uint16_t>(1U << shift);
+    if (inserted)
+    {
+        frame.sm_insertion.raw |= mask;
+    }
+    else
+    {
+        frame.sm_insertion.raw &= static_cast<uint16_t>(~mask);
+    }
+}
+
+static inline bool mmc_frame_get_sm_inserted(const MMC_frame_t &frame, uint8_t sm_index)
+{
+    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
+    {
+        return false;
+    }
+    uint8_t shift = static_cast<uint8_t>(sm_index - MMC_SM_FIRST);
+    uint16_t mask = static_cast<uint16_t>(1U << shift);
+    return (frame.sm_insertion.raw & mask) != 0U;
+}
+
+static inline void mmc_frame_set_sm_error_code(MMC_frame_t &frame, uint8_t sm_index, uint8_t code)
+{
+    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
+    {
+        return;
+    }
+    uint8_t shift = static_cast<uint8_t>((sm_index - MMC_SM_FIRST) * MMC_STATUS_BITS_PER_SM);
+    uint32_t mask = static_cast<uint32_t>(0x7U) << shift;
+    frame.status.raw &= ~mask;
+    frame.status.raw |= (static_cast<uint32_t>(code & 0x7U) << shift);
+}
+
+static inline uint8_t mmc_frame_get_sm_error_code(const MMC_frame_t &frame, uint8_t sm_index)
+{
+    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
+    {
+        return 0U;
+    }
+    uint8_t shift = static_cast<uint8_t>((sm_index - MMC_SM_FIRST) * MMC_STATUS_BITS_PER_SM);
+    uint32_t mask = static_cast<uint32_t>(0x7U) << shift;
+    return static_cast<uint8_t>((frame.status.raw & mask) >> shift);
+}
+
+static inline void mmc_frame_set_upper_arm_flag(MMC_frame_t &frame, bool is_upper_arm)
+{
+    if (is_upper_arm)
+    {
+        frame.status.raw |= MMC_STATUS_UPPER_ARM_MASK;
+    }
+    else
+    {
+        frame.status.raw &= ~MMC_STATUS_UPPER_ARM_MASK;
+    }
+}
+
+static inline bool mmc_frame_is_upper_arm(const MMC_frame_t &frame)
+{
+    return (frame.status.raw & MMC_STATUS_UPPER_ARM_MASK) != 0U;
+}
+
+static inline bool mmc_is_upper_arm_module(uint8_t id)
+{
+    if (id == MMC_LEAD)
+    {
+        return true;
+    }
+    if (id < MMC_SM_FIRST || id > MMC_SM_LAST)
+    {
+        return false;
+    }
+    uint8_t offset = static_cast<uint8_t>(id - MMC_SM_FIRST);
+    return offset < (MMC_SM_COUNT / 2);
+}
+
 static MMC_frame_t dataTX_mmc;
 static MMC_frame_t dataRX_mmc;
 
-float32_t MMC_capacitor_voltage[6];
+float32_t MMC_capacitor_voltage[MMC_SM_COUNT];
 
 constexpr size_t MMC_FRAME_SIZE = sizeof(MMC_frame_t);
 
@@ -386,13 +496,13 @@ void dump_scope_datas(ScopeMimicry &scope)
 void reception_function(void)
 {
     dataRX_mmc = *(MMC_frame_t *)buffer_rx;
-    uint8_t sender_id = mmc_frame_get_id(dataRX_mmc);
+    uint8_t sender_id = mmc_frame_get_sm_identifier(dataRX_mmc);
 
     if (module_ID == MMC_LEAD)
     {
-        if ((sender_id >= MMC_SM1) && (sender_id <= MMC_SM6))
+        if ((sender_id >= MMC_SM_FIRST) && (sender_id <= MMC_SM_LAST))
         {
-            MMC_capacitor_voltage[sender_id - 1] =
+            MMC_capacitor_voltage[sender_id - MMC_SM_FIRST] =
                 mmc_decode_voltage(mmc_frame_get_voltage_raw(dataRX_mmc));
         }
     }
@@ -402,9 +512,10 @@ void reception_function(void)
         if (sender_id == MMC_LEAD)
         {
             /* retrievig command from lead message*/
-            module_comand = GET_SIGNAL(dataRX_mmc.command, module_ID);
+            module_comand = static_cast<uint8_t>(
+                mmc_frame_get_sm_inserted(dataRX_mmc, module_ID));
             /* retrieving status */
-            if (mmc_frame_get_status(dataRX_mmc) == 1)
+            if (mmc_frame_get_sm_error_code(dataRX_mmc, module_ID) != 0U)
             {
                 mode = POWERMODE;
             }
@@ -419,7 +530,8 @@ void reception_function(void)
         if (sender_id == static_cast<uint8_t>(module_ID - 1))
         {
             dataTX_mmc = dataRX_mmc; // Copy the received data to the transmission data
-            mmc_frame_set_id(dataTX_mmc, module_ID);
+            mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
+            mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_voltage_raw(dataTX_mmc,
                                       mmc_encode_voltage(MMC_voltage)); /* TODO: replace MMC_voltage with measured value */
             if (mode == POWERMODE)
@@ -644,12 +756,18 @@ void loop_critical_task()
             sw_timer++;
             scope_timer++;
 
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM1, g[0]);
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM2, g[1]);
-            SET_SIGNAL(dataTX_mmc.command, MMC_SM3, g[2]);
+            dataTX_mmc.sm_insertion.raw = 0U;
+            mmc_frame_set_sm_inserted(dataTX_mmc, MMC_SM1, g[0] != 0U);
+            mmc_frame_set_sm_inserted(dataTX_mmc, MMC_SM2, g[1] != 0U);
+            mmc_frame_set_sm_inserted(dataTX_mmc, MMC_SM3, g[2] != 0U);
 
-            mmc_frame_set_id(dataTX_mmc, module_ID);
-            mmc_frame_set_status(dataTX_mmc, 1);
+            dataTX_mmc.status.raw = 0U;
+            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
+            {
+                mmc_frame_set_sm_error_code(dataTX_mmc, sm, 1U);
+            }
+            mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
+            mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
@@ -685,8 +803,14 @@ void loop_critical_task()
         /* Made to send IDLE flag only once */
         if (!send_idle)
         {
-            mmc_frame_set_id(dataTX_mmc, module_ID);
-            mmc_frame_set_status(dataTX_mmc, 0);
+            dataTX_mmc.sm_insertion.raw = 0U;
+            dataTX_mmc.status.raw = 0U;
+            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
+            {
+                mmc_frame_set_sm_error_code(dataTX_mmc, sm, 0U);
+            }
+            mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
+            mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(MMC_voltage));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
