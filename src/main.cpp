@@ -29,7 +29,6 @@
 #include "SpinAPI.h"
 #include "TaskAPI.h"
 #include "ShieldAPI.h"
-#include "DataAPI.h"
 #include "CommunicationAPI.h"
 
 /*--------------OWNTECH Libraries----------------------------- */
@@ -41,6 +40,9 @@
 
 /*-- Zephyr includes --*/
 #include "zephyr/console/console.h"
+#include <zephyr/logging/log.h>
+
+LOG_MODULE_REGISTER(mmc_main, LOG_LEVEL_INF);
 
 #define MMC_LEAD 0
 #define MMC_SM1 1
@@ -202,6 +204,10 @@ static uint8_t module_command_past;
 static bool change_state_command = false; // Flag to change the state of the command
 static bool send_idle = false;            // Flag to send idle command from master to followers
 
+constexpr uint8_t MMC_STATUS_CODE_BITS = 3;
+constexpr uint32_t MMC_STATUS_CODE_MASK = (1UL << MMC_STATUS_CODE_BITS) - 1U;
+constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_CODE_BITS);
+
 /**
  * @brief Frame exchanged over the RS485 communication bus.
  *
@@ -209,7 +215,7 @@ static bool send_idle = false;            // Flag to send idle command from mast
  * - `sm_insertion`: bit-packed insertion flags for each submodule.
  * - `capacitor_voltage_raw`: 12-bit encoded capacitor voltage.
  * - `arm_current_raw`: 12-bit encoded arm current.
- * - `status`: bit-packed error codes plus the arm selection flag.
+ * - `status`: 3-bit global status level plus the arm selection flag.
  * - `sm_id`: identifier of the sender (lead or submodule index).
  */
 struct MMC_frame
@@ -238,27 +244,15 @@ struct MMC_frame
         uint32_t raw;
         struct
         {
-            uint32_t sm1_error_code : 3;
-            uint32_t sm2_error_code : 3;
-            uint32_t sm3_error_code : 3;
-            uint32_t sm4_error_code : 3;
-            uint32_t sm5_error_code : 3;
-            uint32_t sm6_error_code : 3;
-            uint32_t sm7_error_code : 3;
-            uint32_t sm8_error_code : 3;
-            uint32_t sm9_error_code : 3;
-            uint32_t sm10_error_code : 3;
+            uint32_t status_code : MMC_STATUS_CODE_BITS;
             uint32_t upper_arm_frame : 1;
+            uint32_t reserved : (32 - MMC_STATUS_CODE_BITS - 1);
         } bits;
     } status;
     uint8_t sm_id;
 } __packed;
 
 typedef MMC_frame MMC_frame_t;
-
-constexpr uint8_t MMC_STATUS_BITS_PER_SM = 3;
-constexpr uint8_t MMC_STATUS_UPPER_ARM_SHIFT = MMC_STATUS_BITS_PER_SM * MMC_SM_COUNT;
-constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_UPPER_ARM_SHIFT);
 
 /**
  * @brief Store an encoded capacitor voltage value inside an MMC frame.
@@ -370,40 +364,26 @@ static inline bool mmc_frame_get_sm_inserted(const MMC_frame_t &frame, uint8_t s
 }
 
 /**
- * @brief Set the error code associated with a submodule in the MMC frame.
+ * @brief Set the global status level encoded inside an MMC frame.
  *
  * @param frame Frame to modify.
- * @param sm_index Submodule identifier to update.
- * @param code 3-bit error code to assign.
+ * @param status_code 3-bit status value (IDLE, POWER, error levels).
  */
-static inline void mmc_frame_set_sm_error_code(MMC_frame_t &frame, uint8_t sm_index, uint8_t code)
+static inline void mmc_frame_set_status_code(MMC_frame_t &frame, uint8_t status_code)
 {
-    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
-    {
-        return;
-    }
-    uint8_t shift = static_cast<uint8_t>((sm_index - MMC_SM_FIRST) * MMC_STATUS_BITS_PER_SM);
-    uint32_t mask = static_cast<uint32_t>(0x7U) << shift;
-    frame.status.raw &= ~mask;
-    frame.status.raw |= (static_cast<uint32_t>(code & 0x7U) << shift);
+    frame.status.raw &= ~MMC_STATUS_CODE_MASK;
+    frame.status.raw |= static_cast<uint32_t>(status_code & MMC_STATUS_CODE_MASK);
 }
 
 /**
- * @brief Retrieve the error code associated with a submodule from an MMC frame.
+ * @brief Retrieve the global status level encoded inside an MMC frame.
  *
  * @param frame Frame to inspect.
- * @param sm_index Submodule identifier to read.
- * @return 3-bit error code stored in the frame.
+ * @return 3-bit status value (IDLE, POWER, error levels).
  */
-static inline uint8_t mmc_frame_get_sm_error_code(const MMC_frame_t &frame, uint8_t sm_index)
+static inline uint8_t mmc_frame_get_status_code(const MMC_frame_t &frame)
 {
-    if (sm_index < MMC_SM_FIRST || sm_index > MMC_SM_LAST)
-    {
-        return 0U;
-    }
-    uint8_t shift = static_cast<uint8_t>((sm_index - MMC_SM_FIRST) * MMC_STATUS_BITS_PER_SM);
-    uint32_t mask = static_cast<uint32_t>(0x7U) << shift;
-    return static_cast<uint8_t>((frame.status.raw & mask) >> shift);
+    return static_cast<uint8_t>(frame.status.raw & MMC_STATUS_CODE_MASK);
 }
 
 /**
@@ -468,23 +448,6 @@ uint8_t buffer_rx[MMC_FRAME_SIZE];
 
 float32_t Cap_voltage = 0.0f;
 static float32_t Arm_current = 0.0f;
-
-static void update_measurements(void)
-{
-    float32_t latest = data.getLatest(V_HIGH);
-    if (latest != NO_VALUE)
-    {
-        V_high = latest;
-        Cap_voltage = V_high;
-    }
-
-    latest = data.getLatest(I1_LOW);
-    if (latest != NO_VALUE)
-    {
-        I1_low_value = latest;
-        Arm_current = I1_low_value;
-    }
-}
 
 uint32_t counter_timer = 0;
 uint32_t counter_receive = 0;
@@ -642,10 +605,28 @@ void dump_scope_datas(ScopeMimicry &scope)
     printk("end record\n");
 }
 
+static void update_measurements(void)
+{
+    float32_t latest = shield.sensors.getLatestValue(V_HIGH);
+    if (latest != NO_VALUE)
+    {
+        V_high = latest;
+        Cap_voltage = V_high;
+    }
+
+    latest = shield.sensors.getLatestValue(I1_LOW);
+    if (latest != NO_VALUE)
+    {
+        I1_low_value = latest;
+        Arm_current = I1_low_value;
+    }
+}
+
 void reception_function(void)
 {
     dataRX_mmc = *(MMC_frame_t *)buffer_rx;
     uint8_t sender_id = mmc_frame_get_sm_identifier(dataRX_mmc);
+    uint8_t status_code = mmc_frame_get_status_code(dataRX_mmc);
 
     if (module_ID == MMC_LEAD)
     {
@@ -656,6 +637,12 @@ void reception_function(void)
                 mmc_decode_voltage(mmc_frame_get_voltage_raw(dataRX_mmc));
             MMC_arm_current[index] =
                 mmc_decode_current(mmc_frame_get_current_raw(dataRX_mmc));
+
+            if ((status_code >= LEAD_ERROR) && (mode != IDLEMODE))
+            {
+                mode = IDLEMODE;
+                send_idle = false;
+            }
         }
     }
 
@@ -667,7 +654,7 @@ void reception_function(void)
             module_comand = static_cast<uint8_t>(
                 mmc_frame_get_sm_inserted(dataRX_mmc, module_ID));
             /* retrieving status */
-            if (mmc_frame_get_sm_error_code(dataRX_mmc, module_ID) == POWER)
+            if (status_code == POWER)
             {
                 mode = POWERMODE;
             }
@@ -721,7 +708,6 @@ void setup_routine()
     task.createCritical(loop_critical_task, 100);
 
     shield.sensors.enableDefaultTwistSensors();
-    data.enableTwistDefaultChannels();
 
     /* Finally, start tasks */
     task.startBackground(background_task_number);
@@ -787,6 +773,9 @@ void loop_communication_task()
     case 'a':
         enable_acq = !(enable_acq);
         break;
+    case 'f':
+        mmc_frame_set_status_code(dataTX_mmc, OVER_VOLTAGE);
+        break;
     default:
         break;
     }
@@ -812,7 +801,7 @@ void loop_background_task()
                    (double)MMC_capacitor_voltage[index],
                    (double)MMC_arm_current[index]);
         }
-        
+
         if (mode == IDLEMODE)
         {
             spin.led.turnOff();
@@ -929,7 +918,7 @@ void loop_critical_task()
 
             dataTX_mmc.status.raw = 0U;
 
-            mmc_frame_set_sm_error_code(dataTX_mmc, module_ID, POWER);
+            mmc_frame_set_status_code(dataTX_mmc, POWER);
             mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
@@ -966,14 +955,11 @@ void loop_critical_task()
     else if (mode == IDLEMODE)
     {
         /* Made to send IDLE flag only once */
-        if (!send_idle)
+        if (!send_idle && module_ID == MMC_LEAD)
         {
             dataTX_mmc.sm_insertion.raw = 0U;
             dataTX_mmc.status.raw = 0U;
-            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
-            {
-                mmc_frame_set_sm_error_code(dataTX_mmc, module_ID, IDLE);
-            }
+            mmc_frame_set_status_code(dataTX_mmc, IDLE);
             mmc_frame_set_upper_arm_flag(dataTX_mmc, mmc_is_upper_arm_module(module_ID));
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
