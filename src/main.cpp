@@ -515,6 +515,7 @@ static const float32_t minimal_step = 1.0F / (float32_t)NB_DATAS;
 static uint16_t number_of_cycle = 2;
 static ScopeMimicry scope(NB_DATAS, 5);
 static bool is_downloading;
+static bool fail_test = false;
 
 /* SM switching variables */
 
@@ -675,6 +676,11 @@ void reception_function(void)
                                       mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc,
                                       mmc_encode_current(Arm_current));
+            if(fail_test == true)
+            {
+                mmc_frame_set_status_code(dataTX_mmc, OVER_VOLTAGE);
+                fail_test = false;
+            }
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
         }
@@ -774,7 +780,7 @@ void loop_communication_task()
         enable_acq = !(enable_acq);
         break;
     case 'f':
-        mmc_frame_set_status_code(dataTX_mmc, OVER_VOLTAGE);
+        fail_test = true;
         break;
     default:
         break;
@@ -814,17 +820,17 @@ void loop_background_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-            printk("%1.f:", number_of_connected_submodules_upper_arm);
-            printk("%1.f:", number_of_connected_submodules_lower_arm);
-            printk("%u:", counter_seq);
-            printk("%u:", sw_timer);
-            printk("%1.f:", index_1);
-            printk("%1.f:", index_2);
-            printk("%1.f:", index_3);
-            printk("%u:", (unsigned int)g_u_1);
-            printk("%u:", (unsigned int)g_u_2);
-            printk("%u:", (unsigned int)g_u_3);
-            printk("\n");
+            // printk("%1.f:", number_of_connected_submodules_upper_arm);
+            // printk("%1.f:", number_of_connected_submodules_lower_arm);
+            // printk("%u:", counter_seq);
+            // printk("%u:", sw_timer);
+            // printk("%1.f:", index_1);
+            // printk("%1.f:", index_2);
+            // printk("%1.f:", index_3);
+            // printk("%u:", (unsigned int)g_u_1);
+            // printk("%u:", (unsigned int)g_u_2);
+            // printk("%u:", (unsigned int)g_u_3);
+            // printk("\n");
         }
     }
     else
