@@ -54,6 +54,9 @@ owntech_power_api
 The `owntech` folder contains scripts and board description for PlatformIO, while the `zephyr` folder contains board decription and OwnTech's Zephyr modules.
 By default, these folders (as well as VS Code and PlatformIO folders `.vscode` and `.pio`) are hidden when opening the project in VS Code.
 
+
+11/02/26
+
 If you need to access these in VS Code, open the project using your file explorer, then in the `.vscode` folder, rename file `settings.json`, e.g. to `settings.json.old`.
 
 Advanced Zephyr configuration can be tweaked by editing `zephyr/prj.conf`.
