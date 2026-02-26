@@ -563,7 +563,7 @@ static float32_t i_lowfilter_value;
 /* Oscillations treatment */
 static float32_t duty_cycle = 0.0F; // Applied duty cycle
 static constexpr uint32_t duty_cycle_ramp_size = 4U;
-static float32_t duty_cycle_ramp_up[duty_cycle_ramp_size] = {0.25F, 0.5F, 0.75F, 1.0F}; // Duty cycle ramp in 4 levels to reduce oscillations
+static float32_t duty_cycle_ramp_up[duty_cycle_ramp_size] = {0.25F, 0.5F, 0.75F, 0.95F}; // Duty cycle ramp in 4 levels to reduce oscillations
 static float32_t duty_cycle_ramp_down[duty_cycle_ramp_size] = {0.75F, 0.5F, 0.25F, 0.0F}; // Duty cycle ramp in 4 levels to reduce oscillations
 static constexpr uint32_t duty_cycle_ramp_step_period_us = 500U;
 static constexpr uint32_t duty_cycle_ramp_step_ticks =
