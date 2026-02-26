@@ -74,7 +74,7 @@ constexpr uint8_t MMC_SM_LAST = MMC_SM4;
 /* -------------- GENERAL MMC DEFINITIONS -------------------- */
 
 static const float f0 = 50.F; //[Hz] Output frequency used to generate the sinusoidal reference for open-loop control
-static const uint8_t total_number_of_modules_arm = 4; //[-] Number of followers handled by the lead in this setup
+static const uint8_t total_number_of_modules_arm = 5; //[-] Number of modules per arm
 constexpr float32_t Vcap_expected = 80.0F; //[V] Capacitor DC voltage expected during the test
 constexpr float32_t i_expected = 10.0F; //[A] Expected current amplitude during test
 constexpr float32_t overvoltage_tolerance = 80.0F; //[V] Set overvoltage tolerance
@@ -82,11 +82,8 @@ constexpr float32_t overcurrent_tolerance = 8.0F; //[A] Set overcurrent toleranc
 
 /* -------------- BOARD IDENTIFICATION ----------------------- */
 
-
-// constexpr uint32_t UID_MMC_LEAD_BOARD = 0x002B002D;
 constexpr uint32_t UID_MMC_LEAD_BOARD = 0x00290039;
 constexpr uint32_t UID_MMC_SM1_BOARD = 0x00290043;
-// constexpr uint32_t UID_MMC_SM2_BOARD = 0x00290039;
 constexpr uint32_t UID_MMC_SM2_BOARD = 0x002B002D;
 constexpr uint32_t UID_MMC_SM3_BOARD = 0x002A0053;
 constexpr uint32_t UID_MMC_SM4_BOARD = 0x0029004C;
@@ -799,10 +796,6 @@ void loop_communication_task()
         printk("power mode\n");
         mode = POWERMODE;
         send_idle = false; // Set the flag to send idle command to false 
-        if (module_ID != MMC_LEAD)
-        {
-            Led_turnON_LL();
-        }
         break;
     case 'r':
         is_downloading = true;
@@ -985,12 +978,24 @@ void loop_critical_task()
                 {
                     change_state_command = false; // Reset the flag
                 }
-                shield.power.setDutyCycle(LEG1,1.0);
+                shield.power.setDutyCycle(LEG1,0.95);
                 if (!pwm_enable)
                 {
                     pwm_enable = true;
                     shield.power.start(LEG1);
                 }
+            }
+            else if (module_comand == 2)
+            {
+                if (change_state_command)
+                {
+                    change_state_command = false; // Reset the flag
+                }
+                if (pwm_enable == true)
+                {
+                    shield.power.stop(ALL);
+                }
+                pwm_enable = false;
             }
             else
             {
@@ -1012,10 +1017,6 @@ void loop_critical_task()
     }
     else if (mode == IDLEMODE)
     {
-        if (module_ID != MMC_LEAD)
-        {
-            Led_turnOFF_LL();
-        }
         /* Made to send IDLE flag only once */
         if (!send_idle && module_ID == MMC_LEAD)
         {
