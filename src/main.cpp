@@ -493,7 +493,7 @@ void loop_communication_task(); // Code to be executed in the communication task
 /* --------------- Firmware CVB variables ------------------*/
 
 /* [us] period of the control task (=critical task) */
-static uint32_t control_task_period = 100; // 100 µs
+static constexpr uint32_t control_task_period = 100; // 100 µs
 /* [bool] state of the PWM (ctrl task) */
 static bool pwm_enable = false;
 
@@ -561,12 +561,50 @@ LowPassFirstOrderFilter i_low_filter(Ts, 180e-6F);
 static float32_t i_lowfilter_value;
 
 /* Oscillations treatment */
-static float32_t duty_cycle = 1.0; // Duty cycle to be used during connected states
-static float32_t duty_cycle_ramp_up[4] = {0.25,0.5,0.75,0.95}; // Duty cycle ramp in 4 levels to reduce oscillations
-static float32_t duty_cycle_ramp_down[4] = {0.75,0.5,0.25,0.0}; // Duty cycle ramp in 4 levels to reduce oscillations
+static float32_t duty_cycle = 0.0F; // Applied duty cycle
+static constexpr uint32_t duty_cycle_ramp_size = 4U;
+static float32_t duty_cycle_ramp_up[duty_cycle_ramp_size] = {0.25F, 0.5F, 0.75F, 1.0F}; // Duty cycle ramp in 4 levels to reduce oscillations
+static float32_t duty_cycle_ramp_down[duty_cycle_ramp_size] = {0.75F, 0.5F, 0.25F, 0.0F}; // Duty cycle ramp in 4 levels to reduce oscillations
+static constexpr uint32_t duty_cycle_ramp_step_period_us = 500U;
+static constexpr uint32_t duty_cycle_ramp_step_ticks =
+    (duty_cycle_ramp_step_period_us + control_task_period - 1U) / control_task_period;
 // static float32_t duty_cycle_ramp_up[12] = {0.25,0.25,0.25,0.5,0.5,0.5,0.75,0.75,0.75,0.95,0.95,0.95}; // Duty cycle ramp in 4 levels to reduce oscillations
 // static float32_t duty_cycle_ramp_down[12] = {0.75,0.75,0.75,0.5,0.5,0.5,0.25,0.25,0.25,0.0,0.0,0.0}; // Duty cycle ramp in 4 levels to reduce oscillations
 uint32_t duty_cycle_counter = 0;
+uint32_t duty_cycle_step_counter = 0;
+
+static inline void duty_cycle_ramp_reset()
+{
+    duty_cycle_counter = 0U;
+    duty_cycle_step_counter = 0U;
+}
+
+static inline void duty_cycle_ramp_apply(bool module_inserted)
+{
+    const float32_t *ramp = module_inserted ? duty_cycle_ramp_up : duty_cycle_ramp_down;
+    const float32_t target_final = ramp[duty_cycle_ramp_size - 1U];
+
+    if (duty_cycle_counter < duty_cycle_ramp_size)
+    {
+        if (duty_cycle_step_counter == 0U)
+        {
+            duty_cycle = ramp[duty_cycle_counter];
+            duty_cycle_counter++;
+        }
+
+        duty_cycle_step_counter++;
+        if (duty_cycle_step_counter >= duty_cycle_ramp_step_ticks)
+        {
+            duty_cycle_step_counter = 0U;
+        }
+    }
+    else
+    {
+        duty_cycle = target_final;
+    }
+
+    shield.power.setDutyCycle(LEG1, duty_cycle);
+}
 
 /* --------------SETUP FUNCTIONS------------------------------- */
 
@@ -991,59 +1029,22 @@ void loop_critical_task()
             if (module_comand != module_command_past)
             {
                 change_state_command = true; // Set the flag to change the state
-                duty_cycle_counter = 0;
+                duty_cycle_ramp_reset();
             }
 
-            /* Sets LED ON if gate command is 1 or OFF if gate command is 0 */
-            if (module_comand == 1U)
+            /* module_comand comes from a bit-packed insertion flag (0 or 1). */
+            const bool module_inserted = (module_comand != 0U);
+
+            if (change_state_command)
             {
-                if (change_state_command)
-                {
-                    change_state_command = false; // Reset the flag
-                }
-                if (duty_cycle_counter < 4)
-                {
-                    duty_cycle = duty_cycle_ramp_up[duty_cycle_counter];
-                    duty_cycle_counter++;
-                }
-                shield.power.setDutyCycle(LEG1,duty_cycle);
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(LEG1);
-                }
-                
+                change_state_command = false; // Reset the flag
             }
-            else if (module_comand == 2)
+            duty_cycle_ramp_apply(module_inserted);
+
+            if (!pwm_enable)
             {
-                if (change_state_command)
-                {
-                    change_state_command = false; // Reset the flag
-                }
-                if (pwm_enable == true)
-                {
-                    shield.power.stop(ALL);
-                }
-                pwm_enable = false;
-                
-            }
-            else
-            {
-                if (change_state_command)
-                {
-                    change_state_command = false; // Reset the flag
-                }
-                if (duty_cycle_counter < 4)
-                {
-                    duty_cycle = duty_cycle_ramp_down[duty_cycle_counter];
-                    duty_cycle_counter++;
-                }
-                shield.power.setDutyCycle(LEG1,duty_cycle);
-                if (!pwm_enable)
-                {
-                    pwm_enable = true;
-                    shield.power.start(LEG1);
-                }
+                pwm_enable = true;
+                shield.power.start(LEG1);
             }
             critical_task_timer++;
         } 
@@ -1071,6 +1072,9 @@ void loop_critical_task()
             shield.power.stop(ALL);
         }
         pwm_enable = false;
+        duty_cycle_ramp_reset();
+        duty_cycle = 0.0F;
+        module_command_past = 0xFFU;
     }
     counter_timer++;
 }
