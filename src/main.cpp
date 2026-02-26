@@ -784,6 +784,7 @@ void loop_communication_task()
                "|     press i : idle mode                |\n"
                "|     press p : power mode               |\n"
                "|     press r : record data              |\n"
+               "|     press s : reset scope acquisition  |\n"
                "|     press a : toggle enable_acq var    |\n"
                "|________________________________________|\n\n");
         /*------------------------------------------------------ */
@@ -800,8 +801,28 @@ void loop_communication_task()
     case 'r':
         is_downloading = true;
         break;
+    case 's':
+        if (module_ID == MMC_LEAD)
+        {
+            enable_acq = false;
+            scope_timer = 0;
+            scope.start(); // Rearm trigger to start a fresh capture window.
+            printk("scope acquisition reset\n");
+        }
+        break;
     case 'a':
         enable_acq = !(enable_acq);
+        if ((module_ID == MMC_LEAD) && enable_acq)
+        {
+            // Ensure a new rising edge can trigger a brand new acquisition.
+            scope.start();
+            scope_timer = 0;
+            printk("scope trigger armed\n");
+        }
+        else if ((module_ID == MMC_LEAD) && !enable_acq)
+        {
+            printk("scope trigger disarmed\n");
+        }
         break;
     default:
         break;
@@ -917,7 +938,7 @@ void loop_critical_task()
             number_of_connected_submodules_upper_arm = round(total_number_of_modules_arm*modulation_signal_upper); // recuperate for scope
             number_of_connected_submodules_lower_arm = round(total_number_of_modules_arm*modulation_signal_lower); // recuperate for scope
 
-            i_upper_arm = MMC_arm_current[0];
+            i_upper_arm = MMC_arm_current[3];
             i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
             i_upper_arm = i_lowfilter_value;
             /* Gate assignment with CVB */
