@@ -67,14 +67,14 @@
 #define UNDER_VOLTAGE 4
 #define OVER_CURRENT 5
 
-constexpr uint8_t MMC_SM_COUNT = 10;
+constexpr uint8_t MMC_SM_COUNT = 4;
 constexpr uint8_t MMC_SM_FIRST = MMC_SM1;
-constexpr uint8_t MMC_SM_LAST = MMC_SM10;
+constexpr uint8_t MMC_SM_LAST = MMC_SM4;
 
 /* -------------- GENERAL MMC DEFINITIONS -------------------- */
 
 static const float f0 = 50.F; //[Hz] Output frequency used to generate the sinusoidal reference for open-loop control
-static const uint8_t total_number_of_modules_arm = 5; //[-] Number of modules per arm
+static const uint8_t total_number_of_modules_arm = 4; //[-] Number of followers handled by the lead in this setup
 constexpr float32_t Vcap_expected = 80.0F; //[V] Capacitor DC voltage expected during the test
 constexpr float32_t i_expected = 10.0F; //[A] Expected current amplitude during test
 constexpr float32_t overvoltage_tolerance = 80.0F; //[V] Set overvoltage tolerance
@@ -443,12 +443,7 @@ static inline bool mmc_is_upper_arm_module(uint8_t id)
     {
         return true;
     }
-    if (id < MMC_SM_FIRST || id > MMC_SM_LAST)
-    {
-        return false;
-    }
-    uint8_t offset = static_cast<uint8_t>(id - MMC_SM_FIRST);
-    return offset < (MMC_SM_COUNT / 2);
+    return (id >= MMC_SM_FIRST) && (id <= MMC_SM_LAST);
 }
 
 static MMC_frame_t dataTX_mmc;
@@ -510,14 +505,14 @@ static float meas_data;
 /* Scope variables */
 static bool enable_acq; // Sets trigger moment if true
 static const uint16_t NB_DATAS = 1028; // Number of data acquired
-static ScopeMimicry scope(NB_DATAS, 14); // Scope configuration with 5 channels
+static ScopeMimicry scope(NB_DATAS, 12); // Scope configuration for lead + 4 followers
 static bool is_downloading; // Records data if true
 static uint32_t scope_timer = 0;
 static uint32_t scope_period = 1; // scope acquire data every t = scope_period * critical_task_period (100 µs) s;
 
 /* CVB variables */
 
-static uint8_t index_list[10] = {0,1,2,3,4,5,6,7,8,9}; // Upper arm modules indexes to be sorted with the capacitor voltage vector
+static uint8_t index_list[total_number_of_modules_arm] = {0,1,2,3}; // Upper arm modules indexes to be sorted with the capacitor voltage vector
 static float32_t number_of_connected_submodules_upper_arm;
 static float32_t number_of_connected_submodules_lower_arm;
 static float32_t number_of_connected_submodules_upper_arm_past = 0.0F;
@@ -535,7 +530,6 @@ static float32_t g_u_1;
 static float32_t g_u_2;
 static float32_t g_u_3;
 static float32_t g_u_4;
-static float32_t g_u_5;
 static float32_t g_l_1;
 static float32_t g_l_2;
 static float32_t g_l_3;
@@ -758,12 +752,10 @@ void setup_routine()
         scope.connectChannel(g_u_2, "g_u_2");
         scope.connectChannel(g_u_3, "g_u_3");
         scope.connectChannel(g_u_4, "g_u_4");
-        scope.connectChannel(g_u_5, "g_u_5");
         scope.connectChannel(MMC_capacitor_voltage[0], "v_c_1");
         scope.connectChannel(MMC_capacitor_voltage[1], "v_c_2");
         scope.connectChannel(MMC_capacitor_voltage[2], "v_c_3");
         scope.connectChannel(MMC_capacitor_voltage[3], "v_c_4");
-        scope.connectChannel(MMC_capacitor_voltage[4], "v_c_5");
         scope.connectChannel(MMC_arm_current[0], "i_u");
         scope.connectChannel(i_lowfilter_value, "i_u_filtered");
         scope.set_trigger(&a_trigger);
@@ -964,7 +956,6 @@ void loop_critical_task()
             g_u_2 = (float)g_u[1];  // recuperate for scope acquisition
             g_u_3 = (float)g_u[2];  // recuperate for scope acquisition
             g_u_4 = (float)g_u[3];  // recuperate for scope acquisition
-            g_u_5 = (float)g_u[4];  // recuperate for scope acquisition
 
             /* Scope data acquisition */
             if (scope_timer == scope_period)
