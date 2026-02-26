@@ -83,9 +83,11 @@ constexpr float32_t overcurrent_tolerance = 8.0F; //[A] Set overcurrent toleranc
 /* -------------- BOARD IDENTIFICATION ----------------------- */
 
 
-constexpr uint32_t UID_MMC_LEAD_BOARD = 0x002B002D;
+// constexpr uint32_t UID_MMC_LEAD_BOARD = 0x002B002D;
+constexpr uint32_t UID_MMC_LEAD_BOARD = 0x00290039;
 constexpr uint32_t UID_MMC_SM1_BOARD = 0x00290043;
-constexpr uint32_t UID_MMC_SM2_BOARD = 0x00290039;
+// constexpr uint32_t UID_MMC_SM2_BOARD = 0x00290039;
+constexpr uint32_t UID_MMC_SM2_BOARD = 0x002B002D;
 constexpr uint32_t UID_MMC_SM3_BOARD = 0x002A0053;
 constexpr uint32_t UID_MMC_SM4_BOARD = 0x0029004C;
 constexpr uint32_t UID_MMC_SM5_BOARD = 0x0031001B;
