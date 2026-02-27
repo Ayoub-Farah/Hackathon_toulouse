@@ -140,11 +140,11 @@ static uint8_t detect_module_id()
 constexpr float32_t Cap_voltage_SCALE = Vcap_expected*2; //[V] Scale to transform voltage measurements sent to 1 byte (256 values)
 constexpr float32_t Arm_current_SCALE = i_expected*2; //[A] Scale to transform current measurements sent to 1 byte (256 values)
 constexpr float32_t Arm_current_OFFSET = i_expected; //[A] Offset to transform current measurements sent to 1 byte, used to allow positive and negative values with expected amplitude
-constexpr float32_t VDC = 12.0F;
+constexpr float32_t VDC = 24.0F;
 constexpr float32_t VREF_MIN = 0.0F;
 constexpr float32_t VREF_MAX = VDC;
 constexpr float32_t VREF_STEP = 0.1F;
-constexpr float32_t VREF_DEFAULT = VDC / 4.0F;
+constexpr float32_t VREF_DEFAULT = VDC / 2.0F;
 
 static inline uint16_t mmc_encode_voltage(float32_t voltage)
 {
@@ -1045,7 +1045,7 @@ void loop_critical_task()
             number_of_connected_submodules_upper_arm = round(total_number_of_modules_arm*modulation_signal_upper); // recuperate for scope
             number_of_connected_submodules_lower_arm = round(total_number_of_modules_arm*modulation_signal_lower); // recuperate for scope
 
-            i_upper_arm = MMC_arm_current[0] + 1.4f;
+            i_upper_arm = MMC_arm_current[0] - 1.4f;
             i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
             i_upper_arm = i_lowfilter_value;
             /* Gate assignment with CVB */
