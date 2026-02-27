@@ -145,6 +145,7 @@ constexpr float32_t VREF_MIN = 0.0F;
 constexpr float32_t VREF_MAX = VDC;
 constexpr float32_t VREF_STEP = 0.1F;
 constexpr float32_t VREF_DEFAULT = VDC / 2.0F;
+constexpr bool USE_CVB = false; // true: CVB insertion, false: fixed insertion order
 
 static inline uint16_t mmc_encode_voltage(float32_t voltage)
 {
@@ -544,6 +545,23 @@ static inline bool mmc_is_upper_arm_module(uint8_t id)
     return (id >= MMC_SM_FIRST) && (id <= MMC_SM_LAST);
 }
 
+/**
+ * @brief Clamp the number of inserted submodules to the valid range [0, N].
+ */
+static inline uint8_t mmc_clamp_inserted_submodules(float32_t requested)
+{
+    int32_t modules_to_insert = static_cast<int32_t>(requested);
+    if (modules_to_insert < 0)
+    {
+        modules_to_insert = 0;
+    }
+    if (modules_to_insert > static_cast<int32_t>(total_number_of_modules_arm))
+    {
+        modules_to_insert = total_number_of_modules_arm;
+    }
+    return static_cast<uint8_t>(modules_to_insert);
+}
+
 static MMC_frame_t dataTX_mmc;
 static MMC_frame_t dataRX_mmc;
 
@@ -577,7 +595,7 @@ serial_interface_menu_mode mode = IDLEMODE;
 
 void loop_communication_task(); // Code to be executed in the communication task
 
-/* --------------- Firmware CVB variables ------------------*/
+/* --------------- Firmware control variables ------------------*/
 
 /* [us] period of the control task (=critical task) */
 static uint32_t control_task_period = 100; // 100 µs
@@ -612,18 +630,14 @@ static bool is_downloading; // Records data if true
 static uint32_t scope_timer = 0;
 static uint32_t scope_period = 1; // scope acquire data every t = scope_period * critical_task_period (100 µs) s;
 
-/* CVB variables */
-
-static uint8_t index_list[total_number_of_modules_arm] = {0,1,2,3}; // Upper arm modules indexes to be sorted with the capacitor voltage vector
+/* NLM insertion command for the upper arm */
 static float32_t number_of_connected_submodules_upper_arm;
-static float32_t number_of_connected_submodules_lower_arm;
-static float32_t number_of_connected_submodules_upper_arm_past = 0.0F;
-static float32_t modules_capacitor_voltages_upper_arm[total_number_of_modules_arm]; // Upper arm modules capacitor voltages artificially generated, to be substituted by measured current when implementing MMC
-static uint8_t modules_indexes_upper_arm[total_number_of_modules_arm]; // Upper arm modules indexes to be sorted with the capacitor voltage vector
-static float32_t modules_capacitor_voltages_lower_arm[total_number_of_modules_arm]; // Lower arm modules capacitor voltages artificially generated, to be substituted by measured current when implementing MMC
-static uint8_t modules_indexes_lower_arm[total_number_of_modules_arm]; // Lower arm modules indexes to be sorted with the capacitor voltage vector
-static float32_t i_upper_arm= 1.0F; // Upper arm current, to be substituted by measured current when implementing MMC
-static float32_t i_lower_arm= -1.0F; // Lower arm current, to be substituted by measured current when implementing MMC
+static float32_t number_of_connected_submodules_upper_arm_past = -1.0F;
+static uint8_t index_list[total_number_of_modules_arm] = {0, 1, 2, 3};
+static uint8_t modules_indexes_upper_arm[total_number_of_modules_arm];
+static float32_t modules_capacitor_voltages_upper_arm[total_number_of_modules_arm];
+static const uint8_t insertion_sequence_upper_arm[total_number_of_modules_arm] = {0, 1, 2, 3};
+static float32_t i_upper_arm = 1.0F;
 
 /* Gate logic */
 uint8_t g_u[total_number_of_modules_arm]; // Gate signals to send to the upper modules
@@ -632,9 +646,6 @@ static float32_t g_u_1;
 static float32_t g_u_2;
 static float32_t g_u_3;
 static float32_t g_u_4;
-static float32_t g_l_1;
-static float32_t g_l_2;
-static float32_t g_l_3;
 
 /* NLM */
 static float32_t m = 1;
@@ -643,12 +654,25 @@ static float32_t angle;
 static const float w0 = 2 * PI * f0;
 static float32_t Ts = control_task_period * 1e-6F;
 static float32_t modulation_signal_upper;
-static float32_t modulation_signal_lower;
-
-/* Current measurement filter */
-
 LowPassFirstOrderFilter i_low_filter(Ts, 180e-6F);
 static float32_t i_lowfilter_value;
+
+/**
+ * @brief Assign upper-arm gates with a fixed sequence, without CVB.
+ */
+static inline void apply_upper_arm_insertion_without_cvb(uint8_t modules_to_insert)
+{
+    for (uint8_t counter = 0; counter < total_number_of_modules_arm; counter++)
+    {
+        g_u[counter] = 0U;
+    }
+
+    for (uint8_t counter = 0; counter < total_number_of_modules_arm; counter++)
+    {
+        const uint8_t module_index = insertion_sequence_upper_arm[counter];
+        g_u[module_index] = (counter < modules_to_insert) ? 1U : 0U;
+    }
+}
 /* --------------SETUP FUNCTIONS------------------------------- */
 
 /* Function to control the LEDs in the low level */
@@ -811,6 +835,7 @@ void setup_routine()
     const uint32_t board_uid = read_board_uid();
     printk("Board UID: 0x%08" PRIX32 "\n", board_uid);
     printk("Detected module ID: %u\n", module_ID);
+    printk("Insertion mode: %s\n", USE_CVB ? "CVB" : "NO_CVB");
     printk("Initial VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
     master = (module_ID == MMC_LEAD);
 
@@ -868,7 +893,6 @@ void setup_routine()
         scope.start();
 
         memcpy(modules_indexes_upper_arm, index_list, total_number_of_modules_arm);
-        memcpy(modules_indexes_lower_arm, index_list, total_number_of_modules_arm);
     }
     else{
         communication.sync.initSlave();
@@ -895,6 +919,7 @@ void loop_communication_task()
                "|     press d : VREF -100 mV (LEAD)        |\n"
                "|__________________________________________|\n\n");
         printk("Current VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
+        printk("Insertion mode (code): %s\n", USE_CVB ? "CVB" : "NO_CVB");
         /*------------------------------------------------------ */
         break;
     case 'i':
@@ -1040,21 +1065,31 @@ void loop_critical_task()
             angle = ot_modulo_2pi(angle);
             m = 1;
             modulation_signal_upper = (a + m * ot_sin(angle)) / (2.0);
-            modulation_signal_lower = (a - m * ot_sin(angle)) / (2.0);
 
             number_of_connected_submodules_upper_arm = round(total_number_of_modules_arm*modulation_signal_upper); // recuperate for scope
-            number_of_connected_submodules_lower_arm = round(total_number_of_modules_arm*modulation_signal_lower); // recuperate for scope
+            const uint8_t modules_to_insert = mmc_clamp_inserted_submodules(number_of_connected_submodules_upper_arm);
 
-            i_upper_arm = MMC_arm_current[0] - 1.4f;
-            i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
-            i_upper_arm = i_lowfilter_value;
-            /* Gate assignment with CVB */
-            if (number_of_connected_submodules_upper_arm != number_of_connected_submodules_upper_arm_past){
-                
-                memcpy(modules_capacitor_voltages_upper_arm, MMC_capacitor_voltage, total_number_of_modules_arm * sizeof(float32_t));
+            if (USE_CVB)
+            {
+                i_upper_arm = MMC_arm_current[0] - 1.4f;
+                i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
+                i_upper_arm = i_lowfilter_value;
 
-                sorting_upper_arm(); // Executes the CVB algorithm, chosing which modules to connect
-                number_of_connected_submodules_upper_arm_past = number_of_connected_submodules_upper_arm;
+                /* Gate assignment with CVB */
+                if (number_of_connected_submodules_upper_arm != number_of_connected_submodules_upper_arm_past)
+                {
+                    memcpy(modules_capacitor_voltages_upper_arm,
+                           MMC_capacitor_voltage,
+                           total_number_of_modules_arm * sizeof(float32_t));
+
+                    sorting_upper_arm(); // Executes the CVB algorithm, chosing which modules to connect
+                    number_of_connected_submodules_upper_arm_past = number_of_connected_submodules_upper_arm;
+                }
+            }
+            else
+            {
+                i_lowfilter_value = MMC_arm_current[0];
+                apply_upper_arm_insertion_without_cvb(modules_to_insert);
             }
 
             dataTX_mmc.sm_insertion.raw = 0U;
