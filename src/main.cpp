@@ -924,7 +924,7 @@ void loop_critical_task()
             number_of_connected_submodules_upper_arm = round(total_number_of_modules_arm*modulation_signal_upper); // recuperate for scope
             number_of_connected_submodules_lower_arm = round(total_number_of_modules_arm*modulation_signal_lower); // recuperate for scope
 
-            i_upper_arm = MMC_arm_current[0];
+            i_upper_arm = MMC_arm_current[0] + 1.4f;
             i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
             i_upper_arm = i_lowfilter_value;
             /* Gate assignment with CVB */
