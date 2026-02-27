@@ -258,6 +258,7 @@ struct MMC_frame
     } sm_insertion;
     uint16_t capacitor_voltage_raw : 12;
     uint16_t arm_current_raw : 12;
+    uint16_t dmin : 12; // Minimum duty cycle to apply in power mode, encoded on 12 bits to be sent from lead to followers  
     union
     {
         uint8_t raw;
@@ -490,6 +491,7 @@ static bool pwm_enable = false;
 static uint32_t critical_task_timer = 0; 
 
 static float32_t dmin = 0.0F; // Minimum duty cycle to apply in power mode, to be updated from the serial interface 
+static float32_t dmax = 0.95F;// Maximum duty cycle to apply in power mode, can be set from the serial interface
 
 /* Measure variables */
 
@@ -648,6 +650,7 @@ void reception_function(void)
             /* retrieving command from lead message*/
             module_comand = static_cast<uint8_t>(
                 mmc_frame_get_sm_inserted(dataRX_mmc, module_ID));
+            dmin = dataRX_mmc.dmin/1000.0F; // Update the minimum duty cycle to apply in power mode from the lead message, divided by 1000 to be decoded from the 12-bit format
 
             /* retrieving status */
             if (status_code == POWER)
@@ -968,6 +971,7 @@ void loop_critical_task()
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
+            dataTX_mmc.dmin = dmin*1000.0F; // Send the minimum duty cycle to apply in power mode to followers, multiplied by 1000 to be encoded on 12 bits
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
 
             communication.rs485.startTransmission();
@@ -1003,7 +1007,7 @@ void loop_critical_task()
                 {
                     change_state_command = false; // Reset the flag
                 }
-                shield.power.setDutyCycle(LEG1,1.0);
+                shield.power.setDutyCycle(LEG1,dmax);
                 if (!pwm_enable)
                 {
                     pwm_enable = true;
