@@ -140,6 +140,11 @@ static uint8_t detect_module_id()
 constexpr float32_t Cap_voltage_SCALE = Vcap_expected*2; //[V] Scale to transform voltage measurements sent to 1 byte (256 values)
 constexpr float32_t Arm_current_SCALE = i_expected*2; //[A] Scale to transform current measurements sent to 1 byte (256 values)
 constexpr float32_t Arm_current_OFFSET = i_expected; //[A] Offset to transform current measurements sent to 1 byte, used to allow positive and negative values with expected amplitude
+constexpr float32_t VDC = 12.0F;
+constexpr float32_t VREF_MIN = 0.0F;
+constexpr float32_t VREF_MAX = VDC;
+constexpr float32_t VREF_STEP = 0.1F;
+constexpr float32_t VREF_DEFAULT = VDC / 4.0F;
 
 static inline uint16_t mmc_encode_voltage(float32_t voltage)
 {
@@ -198,6 +203,68 @@ static inline float32_t mmc_decode_current(uint16_t raw)
     return ((Arm_current_SCALE * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F) - Arm_current_OFFSET;
 }
 
+/**
+ * @brief Clamp a VREF setpoint to the allowed operating range.
+ *
+ * @param vref Requested setpoint in volts.
+ * @return Saturated VREF setpoint in volts.
+ */
+static inline float32_t mmc_clamp_vref(float32_t vref)
+{
+    if (vref < VREF_MIN)
+    {
+        return VREF_MIN;
+    }
+    if (vref > VREF_MAX)
+    {
+        return VREF_MAX;
+    }
+    return vref;
+}
+
+/**
+ * @brief Encode a VREF value into the 12-bit transport format.
+ *
+ * @param vref Physical VREF setpoint in volts.
+ * @return 12-bit encoded VREF suitable for MMC frames.
+ */
+static inline uint16_t mmc_encode_vref(float32_t vref)
+{
+    const float32_t clamped_vref = mmc_clamp_vref(vref);
+    int32_t raw = static_cast<int32_t>((clamped_vref * 4095.0F) / VREF_MAX);
+    if (raw < 0)
+    {
+        raw = 0;
+    }
+    if (raw > 0x0FFF)
+    {
+        raw = 0x0FFF;
+    }
+    return static_cast<uint16_t>(raw);
+}
+
+/**
+ * @brief Decode a raw VREF value from an MMC frame.
+ *
+ * @param raw 12-bit encoded VREF setpoint.
+ * @return Physical VREF setpoint in volts.
+ */
+static inline float32_t mmc_decode_vref(uint16_t raw)
+{
+    return mmc_clamp_vref((VREF_MAX * static_cast<float32_t>(raw & 0x0FFF)) / 4095.0F);
+}
+
+/**
+ * @brief Convert a VREF setpoint in volts into millivolts for console prints.
+ *
+ * @param vref Physical VREF setpoint in volts.
+ * @return Setpoint in millivolts.
+ */
+static inline uint32_t mmc_vref_to_millivolts(float32_t vref)
+{
+    return static_cast<uint32_t>(mmc_clamp_vref(vref) * 1000.0F + 0.5F);
+}
+
 
 
 
@@ -229,8 +296,6 @@ constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_CODE_BITS);
 constexpr float32_t DMIN_MIN = 0.00F;
 constexpr float32_t DMIN_MAX = 0.04F;
 constexpr float32_t DMIN_STEP = 0.0005F;
-constexpr float32_t VDC = 12.0F;
-constexpr float32_t VREF = VDC/4.0F; 
 
 /**
  * @brief Frame exchanged over the RS485 communication bus.
@@ -239,6 +304,7 @@ constexpr float32_t VREF = VDC/4.0F;
  * - `sm_insertion`: bit-packed insertion flags for each submodule.
  * - `capacitor_voltage_raw`: 12-bit encoded capacitor voltage.
  * - `arm_current_raw`: 12-bit encoded arm current.
+ * - `vref_raw`: 12-bit encoded VREF setpoint from the lead.
  * - `status`: 3-bit global status level plus the arm selection flag.
  * - `sm_id`: identifier of the sender (lead or submodule index).
  */
@@ -263,6 +329,7 @@ struct MMC_frame
     } sm_insertion;
     uint16_t capacitor_voltage_raw : 12;
     uint16_t arm_current_raw : 12;
+    uint16_t vref_raw : 12;
     union
     {
         uint8_t raw;
@@ -319,6 +386,28 @@ static inline void mmc_frame_set_current_raw(MMC_frame_t &frame, uint16_t raw)
 static inline uint16_t mmc_frame_get_current_raw(const MMC_frame_t &frame)
 {
     return static_cast<uint16_t>(frame.arm_current_raw & 0x0FFFU);
+}
+
+/**
+ * @brief Store an encoded VREF setpoint inside an MMC frame.
+ *
+ * @param frame Frame that will carry the VREF information.
+ * @param raw 12-bit raw VREF setpoint to write into the frame.
+ */
+static inline void mmc_frame_set_vref_raw(MMC_frame_t &frame, uint16_t raw)
+{
+    frame.vref_raw = static_cast<uint16_t>(raw & 0x0FFFU);
+}
+
+/**
+ * @brief Get the encoded VREF setpoint contained in an MMC frame.
+ *
+ * @param frame Frame that carries the VREF information.
+ * @return 12-bit raw VREF setpoint.
+ */
+static inline uint16_t mmc_frame_get_vref_raw(const MMC_frame_t &frame)
+{
+    return static_cast<uint16_t>(frame.vref_raw & 0x0FFFU);
 }
 
 
@@ -468,6 +557,7 @@ uint8_t buffer_rx[MMC_FRAME_SIZE];
 
 float32_t Cap_voltage = 0.0f;
 static float32_t Arm_current = 0.0f;
+static float32_t vref_setpoint = VREF_DEFAULT;
 
 uint32_t counter_timer = 0;
 uint32_t counter_receive = 0;
@@ -651,6 +741,8 @@ void reception_function(void)
 
     else
     {
+        vref_setpoint = mmc_decode_vref(mmc_frame_get_vref_raw(dataRX_mmc));
+
         if (sender_id == MMC_LEAD)
         {
             /* retrieving command from lead message*/
@@ -719,6 +811,7 @@ void setup_routine()
     const uint32_t board_uid = read_board_uid();
     printk("Board UID: 0x%08" PRIX32 "\n", board_uid);
     printk("Detected module ID: %u\n", module_ID);
+    printk("Initial VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
     master = (module_ID == MMC_LEAD);
 
     config_led_LL(); // Configure the LED pin in Low Level
@@ -798,7 +891,10 @@ void loop_communication_task()
                "|     press p : power mode                 |\n"
                "|     press r : record data                |\n"
                "|     press a : toggle enable_acq var      |\n"
+               "|     press u : VREF +100 mV (LEAD)        |\n"
+               "|     press d : VREF -100 mV (LEAD)        |\n"
                "|__________________________________________|\n\n");
+        printk("Current VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
         /*------------------------------------------------------ */
         break;
     case 'i':
@@ -820,6 +916,20 @@ void loop_communication_task()
         break;
     case 'a':
         enable_acq = !(enable_acq);
+        break;
+    case 'u':
+        if (module_ID == MMC_LEAD)
+        {
+            vref_setpoint = mmc_clamp_vref(vref_setpoint + VREF_STEP);
+            printk("VREF setpoint: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
+        }
+        break;
+    case 'd':
+        if (module_ID == MMC_LEAD)
+        {
+            vref_setpoint = mmc_clamp_vref(vref_setpoint - VREF_STEP);
+            printk("VREF setpoint: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
+        }
         break;
     default:
         break;
@@ -961,6 +1071,7 @@ void loop_critical_task()
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
+            mmc_frame_set_vref_raw(dataTX_mmc, mmc_encode_vref(vref_setpoint));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
 
             communication.rs485.startTransmission();
@@ -983,7 +1094,7 @@ void loop_critical_task()
         {
             Led_turnON_LL();
 
-            if(V_high>VREF)
+            if(V_high > vref_setpoint)
             {
                 dmin = dmin - DMIN_STEP;
                 if(dmin < DMIN_MIN)
@@ -1054,6 +1165,7 @@ void loop_critical_task()
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
+            mmc_frame_set_vref_raw(dataTX_mmc, mmc_encode_vref(vref_setpoint));
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
             send_idle = true; // Set the flag to send idle command
