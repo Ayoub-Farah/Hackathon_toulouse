@@ -489,6 +489,8 @@ static bool pwm_enable = false;
 
 static uint32_t critical_task_timer = 0; 
 
+static float32_t dmin = 0.0F; // Minimum duty cycle to apply in power mode, to be updated from the serial interface 
+
 /* Measure variables */
 
 static float32_t V1_low_value;
@@ -782,13 +784,15 @@ void loop_communication_task()
     {
     case 'h':
         /*----------SERIAL INTERFACE MENU----------------------- */
-        printk(" ________________________________________ \n"
-               "|     ---- MENU buck voltage mode ----   |\n"
-               "|     press i : idle mode                |\n"
-               "|     press p : power mode               |\n"
-               "|     press r : record data              |\n"
-               "|     press a : toggle enable_acq var    |\n"
-               "|________________________________________|\n\n");
+        printk(" __________________________________________ \n"
+               "|     ---- MENU buck voltage mode ----     |\n"
+               "|     press i : idle mode                  |\n"
+               "|     press p : power mode                 |\n"
+               "|     press r : record data                |\n"
+               "|     press a : toggle enable_acq var      |\n"
+               "|     press u : up by 0.001 the duty min   |\n"
+               "|     press d : down by 0.001 the duty min |\n"
+               "|__________________________________________|\n\n");
         /*------------------------------------------------------ */
         break;
     case 'i':
@@ -809,6 +813,20 @@ void loop_communication_task()
         break;
     case 'a':
         enable_acq = !(enable_acq);
+        break;
+    case 'u':
+        dmin = dmin + 0.001F;
+        if (dmin >= 0.05F)
+        {
+            dmin = 0.05F;
+        }
+        break;
+    case 'd':
+        dmin = dmin - 0.001F;
+        if (dmin <= 0.0F)
+        {
+            dmin = 0.0F;
+        }
         break;
     default:
         break;
@@ -998,7 +1016,7 @@ void loop_critical_task()
                 {
                     change_state_command = false; // Reset the flag
                 }
-                shield.power.setDutyCycle(LEG1,0.0);
+                shield.power.setDutyCycle(LEG1,dmin);
                 if (!pwm_enable)
                 {
                     pwm_enable = true;
