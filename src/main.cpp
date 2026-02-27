@@ -226,6 +226,11 @@ static bool send_idle = false;            // Flag to send idle command from mast
 constexpr uint8_t MMC_STATUS_CODE_BITS = 3;
 constexpr uint32_t MMC_STATUS_CODE_MASK = (1UL << MMC_STATUS_CODE_BITS) - 1U;
 constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_CODE_BITS);
+constexpr float32_t DMIN_MIN = 0.0F;
+constexpr float32_t DMIN_MAX = 0.05F;
+constexpr float32_t DMIN_STEP = 0.0005F;
+constexpr float32_t DMIN_ENCODE_SCALE = 2000.0F; // 1/0.0005
+constexpr uint16_t DMIN_RAW_MAX = static_cast<uint16_t>(DMIN_MAX * DMIN_ENCODE_SCALE);
 
 /**
  * @brief Frame exchanged over the RS485 communication bus.
@@ -315,6 +320,41 @@ static inline void mmc_frame_set_current_raw(MMC_frame_t &frame, uint16_t raw)
 static inline uint16_t mmc_frame_get_current_raw(const MMC_frame_t &frame)
 {
     return static_cast<uint16_t>(frame.arm_current_raw & 0x0FFFU);
+}
+
+/**
+ * @brief Encode the minimum duty-cycle command exchanged over RS485.
+ *
+ * @param dmin_value Minimum duty cycle command in [0.0; 0.05].
+ * @return Quantized raw value with 0.0005 duty-cycle resolution.
+ */
+static inline uint16_t mmc_encode_dmin(float32_t dmin_value)
+{
+    if (dmin_value <= DMIN_MIN)
+    {
+        return 0U;
+    }
+    if (dmin_value >= DMIN_MAX)
+    {
+        return DMIN_RAW_MAX;
+    }
+    return static_cast<uint16_t>(dmin_value * DMIN_ENCODE_SCALE + 0.5F);
+}
+
+/**
+ * @brief Decode the minimum duty-cycle command received from RS485.
+ *
+ * @param dmin_raw Raw value encoded in the MMC frame.
+ * @return Decoded minimum duty cycle in [0.0; 0.05].
+ */
+static inline float32_t mmc_decode_dmin(uint16_t dmin_raw)
+{
+    uint16_t bounded_raw = dmin_raw;
+    if (bounded_raw > DMIN_RAW_MAX)
+    {
+        bounded_raw = DMIN_RAW_MAX;
+    }
+    return static_cast<float32_t>(bounded_raw) / DMIN_ENCODE_SCALE;
 }
 
 /**
@@ -490,7 +530,7 @@ static bool pwm_enable = false;
 
 static uint32_t critical_task_timer = 0; 
 
-static float32_t dmin = 0.0F; // Minimum duty cycle to apply in power mode, to be updated from the serial interface 
+static float32_t dmin = DMIN_MIN; // Minimum duty cycle to apply in power mode, to be updated from the serial interface
 static float32_t dmax = 0.95F;// Maximum duty cycle to apply in power mode, can be set from the serial interface
 
 /* Measure variables */
@@ -650,7 +690,7 @@ void reception_function(void)
             /* retrieving command from lead message*/
             module_comand = static_cast<uint8_t>(
                 mmc_frame_get_sm_inserted(dataRX_mmc, module_ID));
-            dmin = dataRX_mmc.dmin/1000.0F; // Update the minimum duty cycle to apply in power mode from the lead message, divided by 1000 to be decoded from the 12-bit format
+            dmin = mmc_decode_dmin(dataRX_mmc.dmin); // Update the minimum duty cycle to apply in power mode from the lead message
 
             /* retrieving status */
             if (status_code == POWER)
@@ -793,8 +833,8 @@ void loop_communication_task()
                "|     press p : power mode                 |\n"
                "|     press r : record data                |\n"
                "|     press a : toggle enable_acq var      |\n"
-               "|     press u : up by 0.001 the duty min   |\n"
-               "|     press d : down by 0.001 the duty min |\n"
+               "|     press u : up by 0.0005 the duty min  |\n"
+               "|     press d : down by 0.0005 the duty min|\n"
                "|__________________________________________|\n\n");
         /*------------------------------------------------------ */
         break;
@@ -818,17 +858,17 @@ void loop_communication_task()
         enable_acq = !(enable_acq);
         break;
     case 'u':
-        dmin = dmin + 0.001F;
-        if (dmin >= 0.05F)
+        dmin = dmin + DMIN_STEP;
+        if (dmin >= DMIN_MAX)
         {
-            dmin = 0.05F;
+            dmin = DMIN_MAX;
         }
         break;
     case 'd':
-        dmin = dmin - 0.001F;
-        if (dmin <= 0.0F)
+        dmin = dmin - DMIN_STEP;
+        if (dmin <= DMIN_MIN)
         {
-            dmin = 0.0F;
+            dmin = DMIN_MIN;
         }
         break;
     default:
@@ -971,7 +1011,7 @@ void loop_critical_task()
             mmc_frame_set_sm_identifier(dataTX_mmc, module_ID);
             mmc_frame_set_voltage_raw(dataTX_mmc, mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc, mmc_encode_current(Arm_current));
-            dataTX_mmc.dmin = dmin*1000.0F; // Send the minimum duty cycle to apply in power mode to followers, multiplied by 1000 to be encoded on 12 bits
+            dataTX_mmc.dmin = mmc_encode_dmin(dmin); // Send the minimum duty cycle to apply in power mode to followers
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
 
             communication.rs485.startTransmission();
