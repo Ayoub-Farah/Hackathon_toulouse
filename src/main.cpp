@@ -295,7 +295,7 @@ constexpr uint8_t MMC_STATUS_CODE_BITS = 3;
 constexpr uint32_t MMC_STATUS_CODE_MASK = (1UL << MMC_STATUS_CODE_BITS) - 1U;
 constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_CODE_BITS);
 constexpr float32_t DMIN_MIN = 0.00F;
-constexpr float32_t DMIN_MAX = 0.04F;
+constexpr float32_t DMIN_MAX = 0.055F;
 constexpr float32_t DMIN_STEP = 0.0005F;
 
 /**
@@ -661,6 +661,7 @@ static float32_t i_lowfilter_value;
  * @brief Assign upper-arm gates with a fixed sequence, without CVB.
  */
 static inline void apply_upper_arm_insertion_without_cvb(uint8_t modules_to_insert)
+
 {
     for (uint8_t counter = 0; counter < total_number_of_modules_arm; counter++)
     {
@@ -1071,7 +1072,7 @@ void loop_critical_task()
 
             if (USE_CVB)
             {
-                i_upper_arm = MMC_arm_current[0] - 1.4f;
+                i_upper_arm = MMC_arm_current[0] + 1.4f;
                 i_lowfilter_value = i_low_filter.calculateWithReturn(i_upper_arm); // filtered current value
                 i_upper_arm = i_lowfilter_value;
 
