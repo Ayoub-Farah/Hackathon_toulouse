@@ -37,6 +37,7 @@
 #include <ScopeMimicry.h>
 #include <cstddef>
 #include <cstdint>
+#include "stm32_ll_usart.h"
 
 /*-- Zephyr includes --*/
 #include "zephyr/console/console.h"
@@ -567,10 +568,14 @@ static inline uint32_t flag_to_u32(uint32_t flag)
 static void print_rs485_debug_state(void)
 {
     static uint32_t previous_counter_receive = 0U;
+    static uint32_t previous_overrun_count = 0U;
 
     const uint32_t rx_cb_counter = counter_receive;
     const uint32_t rx_cb_delta = rx_cb_counter - previous_counter_receive;
     previous_counter_receive = rx_cb_counter;
+    const uint32_t ore_counter = communication.rs485.getOverrunCount();
+    const uint32_t ore_delta = ore_counter - previous_overrun_count;
+    previous_overrun_count = ore_counter;
 
     const uint32_t dma_rx_enabled = flag_to_u32(LL_DMA_IsEnabledChannel(DMA1, LL_DMA_CHANNEL_7));
     const uint32_t dma_rx_it_tc = flag_to_u32(LL_DMA_IsEnabledIT_TC(DMA1, LL_DMA_CHANNEL_7));
@@ -596,11 +601,13 @@ static void print_rs485_debug_state(void)
     const uint32_t uart_flag_rxne = flag_to_u32(LL_USART_IsActiveFlag_RXNE_RXFNE(USART3));
 
     printk("RS485 dbg "
-           "rx_cb=%lu(+%lu) "
+           "rx_cb=%lu(+%lu) ore_cnt=%lu(+%lu) "
            "dma[en=%lu ndtr=%lu it_tc=%lu it_ht=%lu it_te=%lu flg_tc=%lu flg_ht=%lu flg_te=%lu isr=0x%08lX] "
            "uart[en=%lu dmar=%lu dmat=%lu it_rxne=%lu it_idle=%lu it_err=%lu it_tc=%lu err_pe=%lu err_fe=%lu err_ne=%lu err_ore=%lu flg_idle=%lu flg_rxne=%lu isr=0x%08lX]\n",
            static_cast<unsigned long>(rx_cb_counter),
            static_cast<unsigned long>(rx_cb_delta),
+           static_cast<unsigned long>(ore_counter),
+           static_cast<unsigned long>(ore_delta),
            static_cast<unsigned long>(dma_rx_enabled),
            static_cast<unsigned long>(dma_rx_ndtr),
            static_cast<unsigned long>(dma_rx_it_tc),
@@ -884,17 +891,6 @@ void loop_background_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-            print_rs485_debug_state();
-        }
-    }
-    else
-    {
-        if (mode == IDLEMODE)
-        {
-            spin.led.turnOff();
-        }
-        else if (mode == POWERMODE)
-        {
             print_rs485_debug_state();
         }
     }

@@ -86,6 +86,7 @@ static uint16_t dma_buffer_size;
 
 /* User function to call in RX callback */
 static dma_callbackRXfunc_t user_fnc = NULL;
+static volatile uint32_t usart3_overrun_counter = 0U;
 
 /* Private functions */
 
@@ -114,6 +115,7 @@ static inline void _clear_usart3_overrun_if_any()
 {
     if (LL_USART_IsActiveFlag_ORE(USART3) != 0U)
     {
+        usart3_overrun_counter++;
         /* Drop stale RX data and clear overrun state to resume DMA RX. */
         LL_USART_RequestRxDataFlush(USART3);
         LL_USART_ClearFlag_ORE(USART3);
@@ -128,6 +130,8 @@ static void _usart3_error_callback(const struct device *dev, void *user_data)
     /* Required by Zephyr UART IRQ API before inspecting/handling IRQ status. */
     (void)uart_irq_update(uart_dev);
     _clear_usart3_overrun_if_any();
+    LL_DMA_DisableChannel(DMA_USART, LL_DMA_CHANNEL_RX);
+    LL_DMA_EnableChannel(DMA_USART, LL_DMA_CHANNEL_RX);
 }
 
 static void _dma_callback_rx()
@@ -407,4 +411,9 @@ void serial_stop()
 void serial_start()
 {
     LL_USART_Enable(USART3);
+}
+
+uint32_t get_overrun_counter()
+{
+    return usart3_overrun_counter;
 }

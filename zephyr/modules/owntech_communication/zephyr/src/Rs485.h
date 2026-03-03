@@ -128,4 +128,11 @@ void serial_stop();
  */
 void serial_start();
 
+/**
+ * @brief Get the number of USART3 overrun (ORE) events handled by the driver.
+ *
+ * @return Overrun counter value.
+ */
+uint32_t get_overrun_counter();
+
 #endif /* RS485_H_ */

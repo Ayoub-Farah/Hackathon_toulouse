@@ -116,6 +116,13 @@ class Rs485Communication
          * @brief Turn off the RS485
          */
         void turnOffCommunication();
+
+        /**
+         * @brief Get the number of handled USART3 overrun events.
+         *
+         * @return ORE counter value.
+         */
+        uint32_t getOverrunCount();
 };
 
 #endif /* CONFIG_OWNTECH_COMMUNICATION_ENABLE_RS485 */

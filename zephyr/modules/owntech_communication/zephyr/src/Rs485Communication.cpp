@@ -94,3 +94,8 @@ void Rs485Communication::turnOffCommunication()
 {
     serial_stop();
 }
+
+uint32_t Rs485Communication::getOverrunCount()
+{
+    return get_overrun_counter();
+}
