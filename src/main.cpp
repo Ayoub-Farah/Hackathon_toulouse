@@ -69,11 +69,11 @@ constexpr uint8_t MMC_SM_LAST = MMC_SM10;
 
 /* -------------- BOARD IDENTIFICATION ----------------------- */
 
-constexpr uint32_t UID_MMC_LEAD_BOARD = 0x00270050;
-constexpr uint32_t UID_MMC_SM1_BOARD = 0x002A004B;
-constexpr uint32_t UID_MMC_SM2_BOARD = 0x002A004D;
-constexpr uint32_t UID_MMC_SM3_BOARD = 0x002B0043;
-constexpr uint32_t UID_MMC_SM4_BOARD = 0x11116666;
+constexpr uint32_t UID_MMC_LEAD_BOARD = 0x00290039;
+constexpr uint32_t UID_MMC_SM1_BOARD = 0x00290043;
+constexpr uint32_t UID_MMC_SM2_BOARD = 0x002B002D;
+constexpr uint32_t UID_MMC_SM3_BOARD = 0x002A0053;
+constexpr uint32_t UID_MMC_SM4_BOARD = 0x0029004C;
 constexpr uint32_t UID_MMC_SM5_BOARD = 0x11117777;
 constexpr uint32_t UID_MMC_SM6_BOARD = 0x11118888;
 constexpr uint32_t UID_MMC_SM7_BOARD = 0x11119999;
@@ -695,6 +695,7 @@ void setup_routine()
 {
     const uint32_t board_uid = read_board_uid();
     printk("Board UID: 0x%08" PRIX32 "\n", board_uid);
+    printk("Detected module ID: %u\n", module_ID);
     master = (module_ID == MMC_LEAD);
 
     config_led_LL(); // Configure the LED pin in Low Level
@@ -816,7 +817,7 @@ void loop_background_task()
             spin.led.toggle();
             printk("%1.f:", number_of_connected_submodules_upper_arm);
             printk("%1.f:", number_of_connected_submodules_lower_arm);
-            printk("%u:", counter_seq);
+            printk("%u:", counter_receive);
             printk("%u:", sw_timer);
             printk("%1.f:", index_1);
             printk("%1.f:", index_2);
