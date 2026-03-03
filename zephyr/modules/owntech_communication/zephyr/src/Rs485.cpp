@@ -27,6 +27,7 @@
 #include <stm32_ll_dma.h>
 #include <stm32_ll_gpio.h>
 #include <stm32_ll_bus.h>
+#include <stm32_ll_usart.h>
 
 /* Zephyr drivers */
 #include <zephyr/drivers/uart.h>
@@ -109,10 +110,31 @@ static void _dma_callback_tx(const struct device *dev,
 /**
  *  DMA callback RX clear reception flag, then call user functions
  */
+static inline void _clear_usart3_overrun_if_any()
+{
+    if (LL_USART_IsActiveFlag_ORE(USART3) != 0U)
+    {
+        /* Drop stale RX data and clear overrun state to resume DMA RX. */
+        LL_USART_RequestRxDataFlush(USART3);
+        LL_USART_ClearFlag_ORE(USART3);
+    }
+}
+
+static void _usart3_error_callback(const struct device *dev, void *user_data)
+{
+    (void)dev;
+    (void)user_data;
+
+    /* Required by Zephyr UART IRQ API before inspecting/handling IRQ status. */
+    (void)uart_irq_update(uart_dev);
+    _clear_usart3_overrun_if_any();
+}
+
 static void _dma_callback_rx()
 {
     /* Clear transmission complete flag */
     LL_DMA_ClearFlag_TC7(DMA_USART);
+    _clear_usart3_overrun_if_any();
 
     if(user_fnc != NULL){
         user_fnc();
@@ -188,6 +210,16 @@ void serial_init(void)
     /* Disable Receiver Data Register
      * Not Empty Interrupt for DMA to fetch data */
     LL_USART_DisableIT_RXNE_RXFNE(USART3);
+
+    /* Handle USART3 overrun independently from DMA TC callback path. */
+    if (uart_irq_callback_user_data_set(uart_dev,
+                                        _usart3_error_callback,
+                                        NULL) == 0)
+    {
+        uart_irq_err_enable(uart_dev);
+    }
+    LL_USART_EnableIT_ERROR(USART3);
+    _clear_usart3_overrun_if_any();
 
     LL_USART_Enable(USART3);
 }
