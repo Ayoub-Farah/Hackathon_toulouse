@@ -792,19 +792,19 @@ void loop_background_task()
 {
     if (module_ID == MMC_LEAD)
     {
-        printk("COM bus measurements\n");
-        printk("Lead  : V=%0.2f V I=%0.2f A\n", (double)Cap_voltage, (double)Arm_current);
-        for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
-        {
-            const uint8_t index = static_cast<uint8_t>(sm - MMC_SM_FIRST);
-            printk("SM%u : V=%0.2f V I=%0.2f A\n",
-                   sm,
-                   (double)MMC_capacitor_voltage[index],
-                   (double)MMC_arm_current[index]);
-        }
 
         if (mode == IDLEMODE)
         {
+            printk("COM bus measurements\n");
+            printk("Lead  : V=%0.2f V I=%0.2f A\n", (double)Cap_voltage, (double)Arm_current);
+            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
+            {
+                const uint8_t index = static_cast<uint8_t>(sm - MMC_SM_FIRST);
+                printk("SM%u : V=%0.2f V I=%0.2f A\n",
+                    sm,
+                    (double)MMC_capacitor_voltage[index],
+                    (double)MMC_arm_current[index]);
+            }
             spin.led.turnOff();
             if (is_downloading)
             {

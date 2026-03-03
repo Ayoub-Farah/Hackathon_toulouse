@@ -309,3 +309,11 @@ zephyr_udc0: &usb {
 &rng {
 	status = "okay";
 };
+
+/*
+ * Override USB IRQ priorities for this application.
+ */
+
+&usb {
+    interrupts = <20 5>, <19 5>;
+};
