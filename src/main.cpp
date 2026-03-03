@@ -41,6 +41,8 @@
 /*-- Zephyr includes --*/
 #include "zephyr/console/console.h"
 #include <zephyr/logging/log.h>
+#include <stm32_ll_dma.h>
+#include <stm32_ll_usart.h>
 
 LOG_MODULE_REGISTER(mmc_main, LOG_LEVEL_INF);
 
@@ -557,6 +559,73 @@ static float32_t g_l_1;
 static float32_t g_l_2;
 static float32_t g_l_3;
 
+static inline uint32_t flag_to_u32(uint32_t flag)
+{
+    return (flag != 0U) ? 1U : 0U;
+}
+
+static void print_rs485_debug_state(void)
+{
+    static uint32_t previous_counter_receive = 0U;
+
+    const uint32_t rx_cb_counter = counter_receive;
+    const uint32_t rx_cb_delta = rx_cb_counter - previous_counter_receive;
+    previous_counter_receive = rx_cb_counter;
+
+    const uint32_t dma_rx_enabled = flag_to_u32(LL_DMA_IsEnabledChannel(DMA1, LL_DMA_CHANNEL_7));
+    const uint32_t dma_rx_it_tc = flag_to_u32(LL_DMA_IsEnabledIT_TC(DMA1, LL_DMA_CHANNEL_7));
+    const uint32_t dma_rx_it_ht = flag_to_u32(LL_DMA_IsEnabledIT_HT(DMA1, LL_DMA_CHANNEL_7));
+    const uint32_t dma_rx_it_te = flag_to_u32(LL_DMA_IsEnabledIT_TE(DMA1, LL_DMA_CHANNEL_7));
+    const uint32_t dma_rx_flag_tc = flag_to_u32(LL_DMA_IsActiveFlag_TC7(DMA1));
+    const uint32_t dma_rx_flag_ht = flag_to_u32(LL_DMA_IsActiveFlag_HT7(DMA1));
+    const uint32_t dma_rx_flag_te = flag_to_u32(LL_DMA_IsActiveFlag_TE7(DMA1));
+    const uint32_t dma_rx_ndtr = LL_DMA_GetDataLength(DMA1, LL_DMA_CHANNEL_7);
+
+    const uint32_t uart_enabled = flag_to_u32(LL_USART_IsEnabled(USART3));
+    const uint32_t uart_dma_rx_req = flag_to_u32(LL_USART_IsEnabledDMAReq_RX(USART3));
+    const uint32_t uart_dma_tx_req = flag_to_u32(LL_USART_IsEnabledDMAReq_TX(USART3));
+    const uint32_t uart_it_rxne = flag_to_u32(LL_USART_IsEnabledIT_RXNE_RXFNE(USART3));
+    const uint32_t uart_it_idle = flag_to_u32(LL_USART_IsEnabledIT_IDLE(USART3));
+    const uint32_t uart_it_err = flag_to_u32(LL_USART_IsEnabledIT_ERROR(USART3));
+    const uint32_t uart_it_tc = flag_to_u32(LL_USART_IsEnabledIT_TC(USART3));
+    const uint32_t uart_err_pe = flag_to_u32(LL_USART_IsActiveFlag_PE(USART3));
+    const uint32_t uart_err_fe = flag_to_u32(LL_USART_IsActiveFlag_FE(USART3));
+    const uint32_t uart_err_ne = flag_to_u32(LL_USART_IsActiveFlag_NE(USART3));
+    const uint32_t uart_err_ore = flag_to_u32(LL_USART_IsActiveFlag_ORE(USART3));
+    const uint32_t uart_flag_idle = flag_to_u32(LL_USART_IsActiveFlag_IDLE(USART3));
+    const uint32_t uart_flag_rxne = flag_to_u32(LL_USART_IsActiveFlag_RXNE_RXFNE(USART3));
+
+    printk("RS485 dbg "
+           "rx_cb=%lu(+%lu) "
+           "dma[en=%lu ndtr=%lu it_tc=%lu it_ht=%lu it_te=%lu flg_tc=%lu flg_ht=%lu flg_te=%lu isr=0x%08lX] "
+           "uart[en=%lu dmar=%lu dmat=%lu it_rxne=%lu it_idle=%lu it_err=%lu it_tc=%lu err_pe=%lu err_fe=%lu err_ne=%lu err_ore=%lu flg_idle=%lu flg_rxne=%lu isr=0x%08lX]\n",
+           static_cast<unsigned long>(rx_cb_counter),
+           static_cast<unsigned long>(rx_cb_delta),
+           static_cast<unsigned long>(dma_rx_enabled),
+           static_cast<unsigned long>(dma_rx_ndtr),
+           static_cast<unsigned long>(dma_rx_it_tc),
+           static_cast<unsigned long>(dma_rx_it_ht),
+           static_cast<unsigned long>(dma_rx_it_te),
+           static_cast<unsigned long>(dma_rx_flag_tc),
+           static_cast<unsigned long>(dma_rx_flag_ht),
+           static_cast<unsigned long>(dma_rx_flag_te),
+           static_cast<unsigned long>(DMA1->ISR),
+           static_cast<unsigned long>(uart_enabled),
+           static_cast<unsigned long>(uart_dma_rx_req),
+           static_cast<unsigned long>(uart_dma_tx_req),
+           static_cast<unsigned long>(uart_it_rxne),
+           static_cast<unsigned long>(uart_it_idle),
+           static_cast<unsigned long>(uart_it_err),
+           static_cast<unsigned long>(uart_it_tc),
+           static_cast<unsigned long>(uart_err_pe),
+           static_cast<unsigned long>(uart_err_fe),
+           static_cast<unsigned long>(uart_err_ne),
+           static_cast<unsigned long>(uart_err_ore),
+           static_cast<unsigned long>(uart_flag_idle),
+           static_cast<unsigned long>(uart_flag_rxne),
+           static_cast<unsigned long>(USART3->ISR));
+}
+
 /* --------------SETUP FUNCTIONS------------------------------- */
 
 void config_led_LL()
@@ -795,16 +864,16 @@ void loop_background_task()
 
         if (mode == IDLEMODE)
         {
-            printk("COM bus measurements\n");
-            printk("Lead  : V=%0.2f V I=%0.2f A\n", (double)Cap_voltage, (double)Arm_current);
-            for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
-            {
-                const uint8_t index = static_cast<uint8_t>(sm - MMC_SM_FIRST);
-                printk("SM%u : V=%0.2f V I=%0.2f A\n",
-                    sm,
-                    (double)MMC_capacitor_voltage[index],
-                    (double)MMC_arm_current[index]);
-            }
+            // printk("COM bus measurements\n");
+            // printk("Lead  : V=%0.2f V I=%0.2f A\n", (double)Cap_voltage, (double)Arm_current);
+            // for (uint8_t sm = MMC_SM_FIRST; sm <= MMC_SM_LAST; ++sm)
+            // {
+            //     const uint8_t index = static_cast<uint8_t>(sm - MMC_SM_FIRST);
+            //     printk("SM%u : V=%0.2f V I=%0.2f A\n",
+            //         sm,
+            //         (double)MMC_capacitor_voltage[index],
+            //         (double)MMC_arm_current[index]);
+            // }
             spin.led.turnOff();
             if (is_downloading)
             {
@@ -815,17 +884,7 @@ void loop_background_task()
         if (mode == POWERMODE)
         {
             spin.led.toggle();
-            printk("%1.f:", number_of_connected_submodules_upper_arm);
-            printk("%1.f:", number_of_connected_submodules_lower_arm);
-            printk("%u:", counter_receive);
-            printk("%u:", sw_timer);
-            printk("%1.f:", index_1);
-            printk("%1.f:", index_2);
-            printk("%1.f:", index_3);
-            printk("%u:", (unsigned int)g_u_1);
-            printk("%u:", (unsigned int)g_u_2);
-            printk("%u:", (unsigned int)g_u_3);
-            printk("\n");
+            print_rs485_debug_state();
         }
     }
     else
@@ -833,6 +892,10 @@ void loop_background_task()
         if (mode == IDLEMODE)
         {
             spin.led.turnOff();
+        }
+        else if (mode == POWERMODE)
+        {
+            print_rs485_debug_state();
         }
     }
 
