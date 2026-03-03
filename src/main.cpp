@@ -144,7 +144,7 @@ constexpr float32_t VDC = 24.0F;
 constexpr float32_t VREF_MIN = 0.0F;
 constexpr float32_t VREF_MAX = VDC;
 constexpr float32_t VREF_STEP = 0.1F;
-constexpr float32_t VREF_DEFAULT = VDC / 2.0F;
+constexpr float32_t VREF_DEFAULT =15.0F;
 constexpr bool USE_CVB = false; // true: CVB insertion, false: fixed insertion order
 
 static inline uint16_t mmc_encode_voltage(float32_t voltage)
@@ -295,8 +295,39 @@ constexpr uint8_t MMC_STATUS_CODE_BITS = 3;
 constexpr uint32_t MMC_STATUS_CODE_MASK = (1UL << MMC_STATUS_CODE_BITS) - 1U;
 constexpr uint32_t MMC_STATUS_UPPER_ARM_MASK = (1UL << MMC_STATUS_CODE_BITS);
 constexpr float32_t DMIN_MIN = 0.00F;
-constexpr float32_t DMIN_MAX = 0.055F;
+constexpr float32_t DMIN_MAX = 0.2F;
 constexpr float32_t DMIN_STEP = 0.0005F;
+constexpr uint8_t DMIN_REPORTING_MODULE = MMC_SM1;
+
+/**
+ * @brief Clamp a DMIN value to the allowed range.
+ *
+ * @param duty Duty-cycle lower bound.
+ * @return Saturated duty-cycle lower bound.
+ */
+static inline float32_t mmc_clamp_dmin(float32_t duty)
+{
+    if (duty < DMIN_MIN)
+    {
+        return DMIN_MIN;
+    }
+    if (duty > DMIN_MAX)
+    {
+        return DMIN_MAX;
+    }
+    return duty;
+}
+
+/**
+ * @brief Convert DMIN into parts per million for console printing.
+ *
+ * @param duty Duty-cycle lower bound.
+ * @return DMIN in ppm.
+ */
+static inline uint32_t mmc_dmin_to_ppm(float32_t duty)
+{
+    return static_cast<uint32_t>(mmc_clamp_dmin(duty) * 1000000.0F + 0.5F);
+}
 
 /**
  * @brief Frame exchanged over the RS485 communication bus.
@@ -306,6 +337,7 @@ constexpr float32_t DMIN_STEP = 0.0005F;
  * - `capacitor_voltage_raw`: 12-bit encoded capacitor voltage.
  * - `arm_current_raw`: 12-bit encoded arm current.
  * - `vref_raw`: 12-bit encoded VREF setpoint from the lead.
+ * - `dmin_bytes`: binary float representation of duty-cycle minimum reported by one submodule.
  * - `status`: 3-bit global status level plus the arm selection flag.
  * - `sm_id`: identifier of the sender (lead or submodule index).
  */
@@ -331,6 +363,7 @@ struct MMC_frame
     uint16_t capacitor_voltage_raw : 12;
     uint16_t arm_current_raw : 12;
     uint16_t vref_raw : 12;
+    uint16_t dmin_value; 
     union
     {
         uint8_t raw;
@@ -410,7 +443,6 @@ static inline uint16_t mmc_frame_get_vref_raw(const MMC_frame_t &frame)
 {
     return static_cast<uint16_t>(frame.vref_raw & 0x0FFFU);
 }
-
 
 
 /**
@@ -606,6 +638,8 @@ static uint32_t critical_task_timer = 0;
 
 static float32_t dmin = DMIN_MIN; // Minimum duty cycle to apply in power mode, to be updated from the serial interface
 static float32_t dmax = 0.95F;// Maximum duty cycle to apply in power mode, can be set from the serial interface
+static float32_t last_received_dmin_report = DMIN_MIN;
+static bool last_received_dmin_report_valid = false;
 
 /* Measure variables */
 
@@ -656,6 +690,7 @@ static float32_t Ts = control_task_period * 1e-6F;
 static float32_t modulation_signal_upper;
 LowPassFirstOrderFilter i_low_filter(Ts, 180e-6F);
 static float32_t i_lowfilter_value;
+static uint16_t dmin_received;
 
 /**
  * @brief Assign upper-arm gates with a fixed sequence, without CVB.
@@ -756,6 +791,11 @@ void reception_function(void)
             MMC_arm_current[index] =
                 mmc_decode_current(mmc_frame_get_current_raw(dataRX_mmc));
 
+            if (sender_id == MMC_SM_LAST)
+            {
+                dmin_received = dataRX_mmc.dmin_value;
+            }
+
             if ((status_code >= LEAD_ERROR) && (mode != IDLEMODE))
             {
                 mode = IDLEMODE;
@@ -797,6 +837,11 @@ void reception_function(void)
                                       mmc_encode_voltage(Cap_voltage));
             mmc_frame_set_current_raw(dataTX_mmc,
                                       mmc_encode_current(Arm_current));
+
+            if (module_ID == MMC_SM_LAST)
+            {
+                dataTX_mmc.dmin_value = (uint16_t)(shield.power.getPeriod(LEG1)*dmin);
+            }
             
             /* Verifies overvoltage protection criteria */
             if(Cap_voltage > overvoltage_tolerance)
@@ -837,6 +882,7 @@ void setup_routine()
     printk("Board UID: 0x%08" PRIX32 "\n", board_uid);
     printk("Detected module ID: %u\n", module_ID);
     printk("Insertion mode: %s\n", USE_CVB ? "CVB" : "NO_CVB");
+    printk("DMIN reporting module: SM%u\n", DMIN_REPORTING_MODULE);
     printk("Initial VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
     master = (module_ID == MMC_LEAD);
 
@@ -887,7 +933,7 @@ void setup_routine()
         scope.connectChannel(MMC_capacitor_voltage[1], "v_c_2");
         scope.connectChannel(MMC_capacitor_voltage[2], "v_c_3");
         scope.connectChannel(MMC_capacitor_voltage[3], "v_c_4");
-        scope.connectChannel(MMC_arm_current[0], "i_u");
+        scope.connectChannel(MMC_arm_current[1], "i_u");
         scope.connectChannel(i_lowfilter_value, "i_u_filtered");
         scope.set_trigger(&a_trigger);
         scope.set_delay(0.0F);
@@ -910,17 +956,32 @@ void loop_communication_task()
     {
     case 'h':
         /*----------SERIAL INTERFACE MENU----------------------- */
-        printk(" __________________________________________ \n"
-               "|     ---- MENU buck voltage mode ----     |\n"
-               "|     press i : idle mode                  |\n"
-               "|     press p : power mode                 |\n"
-               "|     press r : record data                |\n"
-               "|     press a : toggle enable_acq var      |\n"
-               "|     press u : VREF +100 mV (LEAD)        |\n"
-               "|     press d : VREF -100 mV (LEAD)        |\n"
-               "|__________________________________________|\n\n");
+        // printk(" __________________________________________ \n"
+        //        "|     ---- MENU buck voltage mode ----     |\n"
+        //        "|     press i : idle mode                  |\n"
+        //        "|     press p : power mode                 |\n"
+        //        "|     press r : record data                |\n"
+        //        "|     press a : toggle enable_acq var      |\n"
+        //        "|     press u : VREF +100 mV (LEAD)        |\n"
+        //        "|     press d : VREF -100 mV (LEAD)        |\n"
+        //        "|__________________________________________|\n\n");
         printk("Current VREF: %u mV\n", mmc_vref_to_millivolts(vref_setpoint));
         printk("Insertion mode (code): %s\n", USE_CVB ? "CVB" : "NO_CVB");
+        printk("Dmin received : %u\n", dmin_received);
+        if (module_ID == MMC_LEAD)
+        {
+            if (last_received_dmin_report_valid)
+            {
+                printk("Last DMIN report (SM%u): %u ppm\n",
+                       DMIN_REPORTING_MODULE,
+                       mmc_dmin_to_ppm(last_received_dmin_report));
+            }
+            else
+            {
+                printk("Last DMIN report (SM%u): no data yet\n",
+                       DMIN_REPORTING_MODULE);
+            }
+        }
         /*------------------------------------------------------ */
         break;
     case 'i':
