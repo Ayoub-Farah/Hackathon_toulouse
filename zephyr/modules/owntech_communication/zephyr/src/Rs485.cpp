@@ -471,22 +471,20 @@ bool recover_rx_dma_if_overrun()
 
     _rx_probe_set_high();
 
-    /* Clear UART RX overrun state first. */
-    LL_USART_RequestRxDataFlush(USART3);
-    LL_USART_ClearFlag_ORE(USART3);
+    /* Register-level fast path for overrun recovery. */
+    USART3->RQR = USART_RQR_RXFRQ;
+    USART3->ICR = USART_ICR_ORECF;
 
-    /* Re-arm circular RX DMA from the beginning of user RX buffer. */
-    LL_DMA_DisableChannel(DMA_USART, LL_DMA_CHANNEL_RX);
-    LL_DMA_ClearFlag_TC7(DMA_USART);
-    LL_DMA_ClearFlag_HT7(DMA_USART);
-    LL_DMA_ClearFlag_TE7(DMA_USART);
-    LL_DMA_SetMemoryAddress(DMA_USART,
-                            LL_DMA_CHANNEL_RX,
-                            (uint32_t)(rx_usart_val));
-    LL_DMA_SetDataLength(DMA_USART, LL_DMA_CHANNEL_RX, dma_buffer_size);
-    LL_DMA_EnableIT_TC(DMA_USART, LL_DMA_CHANNEL_RX);
-    LL_DMA_DisableIT_HT(DMA_USART, LL_DMA_CHANNEL_RX);
-    LL_DMA_EnableChannel(DMA_USART, LL_DMA_CHANNEL_RX);
+    DMA_Channel_TypeDef* dma_rx_ch = DMA1_Channel7;
+
+    /* Re-arm circular RX DMA from the beginning. */
+    dma_rx_ch->CCR &= ~DMA_CCR_EN;
+    DMA1->IFCR = DMA_IFCR_CTCIF7 | DMA_IFCR_CHTIF7 | DMA_IFCR_CTEIF7;
+    dma_rx_ch->CMAR = (uint32_t)(rx_usart_val);
+    dma_rx_ch->CNDTR = dma_buffer_size;
+    dma_rx_ch->CCR = (dma_rx_ch->CCR | DMA_CCR_TCIE) & (~DMA_CCR_HTIE);
+    dma_rx_ch->CCR |= DMA_CCR_EN;
+
 
     _rx_probe_set_low();
 
