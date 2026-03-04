@@ -37,6 +37,8 @@
 #include "Rs485.h"
 
 #define DMA_USART DMA1 /* DMA used */
+#define RX_PROBE_PORT GPIOC
+#define RX_PROBE_PIN LL_GPIO_PIN_8
 
 /**
  *  HAL override is used because of undesired effect in zephyr's dma handler
@@ -90,6 +92,32 @@ static volatile uint32_t usart3_overrun_counter = 0U;
 
 /* Private functions */
 
+static void _rx_probe_init()
+{
+    LL_GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOC);
+
+    GPIO_InitStruct.Pin = RX_PROBE_PIN;
+    GPIO_InitStruct.Mode = LL_GPIO_MODE_OUTPUT;
+    GPIO_InitStruct.Speed = LL_GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+    GPIO_InitStruct.Pull = LL_GPIO_PULL_NO;
+    LL_GPIO_Init(RX_PROBE_PORT, &GPIO_InitStruct);
+
+    LL_GPIO_ResetOutputPin(RX_PROBE_PORT, RX_PROBE_PIN);
+}
+
+static inline void _rx_probe_set_high()
+{
+    LL_GPIO_SetOutputPin(RX_PROBE_PORT, RX_PROBE_PIN);
+}
+
+static inline void _rx_probe_set_low()
+{
+    LL_GPIO_ResetOutputPin(RX_PROBE_PORT, RX_PROBE_PIN);
+}
+
 /**
  *  DMA callback TX clear transmission flag, and disabled DMA channel TX.
  */
@@ -135,9 +163,11 @@ static void _dma_callback_rx_common()
 
     LL_DMA_ClearFlag_TC7(DMA_USART);
 
+    _rx_probe_set_high();
     if(user_fnc != NULL){
         user_fnc();
     }
+    _rx_probe_set_low();
 }
 
 /**
@@ -166,10 +196,12 @@ static void _dma_callback_rx_zephyr(const struct device *dev,
 
     if (status == DMA_STATUS_COMPLETE)
     {
+        _rx_probe_set_high();
         if (user_fnc != NULL)
         {
             user_fnc();
         }
+        _rx_probe_set_low();
     }
 }
 
@@ -215,6 +247,8 @@ void init_usrDataSize(uint16_t size)
  */
 void serial_init(void)
 {
+    _rx_probe_init();
+
     uart_config_get(uart_dev, &uart_cfg);
     uart_cfg.baudrate = baud;
     uart_cfg.flow_ctrl = UART_CFG_FLOW_CTRL_NONE;
@@ -380,8 +414,8 @@ void dma_channel_init_tx()
     }
 
     /* Bind DMA1 channel IRQ line (17) to the direct zero-latency ISR. */
-    // IRQ_DIRECT_CONNECT(17, 0, _dma_callback_rx_direct, IRQ_ZERO_LATENCY);
-    // irq_enable(17);
+    IRQ_DIRECT_CONNECT(17, 0, _dma_callback_rx_direct, IRQ_ZERO_LATENCY);
+    irq_enable(17);
 
     /* Start RX DMA channel through Zephyr API */
      dma_start(dma1, ZEPHYR_DMA_CHANNEL_RX);
