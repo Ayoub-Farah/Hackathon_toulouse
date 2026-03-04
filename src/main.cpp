@@ -912,6 +912,7 @@ void loop_background_task()
 void loop_critical_task()
 {
     update_measurements();
+    (void)communication.rs485.recoverRxDmaIfOverrun();
 
     if (mode == POWERMODE)
     {

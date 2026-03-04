@@ -99,3 +99,8 @@ uint32_t Rs485Communication::getOverrunCount()
 {
     return get_overrun_counter();
 }
+
+bool Rs485Communication::recoverRxDmaIfOverrun()
+{
+    return recover_rx_dma_if_overrun();
+}

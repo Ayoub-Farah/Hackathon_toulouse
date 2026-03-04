@@ -123,6 +123,13 @@ class Rs485Communication
          * @return ORE counter value.
          */
         uint32_t getOverrunCount();
+
+        /**
+         * @brief Recover RX DMA if USART overrun is detected.
+         *
+         * @return true if recovery was applied, false otherwise.
+         */
+        bool recoverRxDmaIfOverrun();
 };
 
 #endif /* CONFIG_OWNTECH_COMMUNICATION_ENABLE_RS485 */

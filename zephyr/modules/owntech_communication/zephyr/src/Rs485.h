@@ -25,6 +25,7 @@
 #ifndef RS485_H_
 #define RS485_H_
 
+#include <stdbool.h>
 #include <zephyr/kernel.h>
 
 #include <stm32_ll_usart.h>
@@ -134,5 +135,15 @@ void serial_start();
  * @return Overrun counter value.
  */
 uint32_t get_overrun_counter();
+
+/**
+ * @brief Recover RS485 RX DMA when USART3 overrun is detected.
+ *
+ * This function checks ORE, clears UART overrun state and rearms the
+ * circular RX DMA buffer (disable/reload/enable).
+ *
+ * @return true if a recovery was applied, false otherwise.
+ */
+bool recover_rx_dma_if_overrun();
 
 #endif /* RS485_H_ */
