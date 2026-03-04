@@ -163,11 +163,11 @@ static void _dma_callback_rx_common()
 
     LL_DMA_ClearFlag_TC7(DMA_USART);
 
-    _rx_probe_set_high();
+    // _rx_probe_set_high();
     if(user_fnc != NULL){
         user_fnc();
     }
-    _rx_probe_set_low();
+    // _rx_probe_set_low();
 }
 
 /**
@@ -196,12 +196,12 @@ static void _dma_callback_rx_zephyr(const struct device *dev,
 
     if (status == DMA_STATUS_COMPLETE)
     {
-        _rx_probe_set_high();
+        // _rx_probe_set_high();
         if (user_fnc != NULL)
         {
             user_fnc();
         }
-        _rx_probe_set_low();
+        // _rx_probe_set_low();
     }
 }
 
@@ -461,12 +461,15 @@ void serial_start()
 
 bool recover_rx_dma_if_overrun()
 {
+
     if (LL_USART_IsActiveFlag_ORE(USART3) == 0U)
     {
         return false;
     }
 
     usart3_overrun_counter++;
+
+    _rx_probe_set_high();
 
     /* Clear UART RX overrun state first. */
     LL_USART_RequestRxDataFlush(USART3);
@@ -484,6 +487,8 @@ bool recover_rx_dma_if_overrun()
     LL_DMA_EnableIT_TC(DMA_USART, LL_DMA_CHANNEL_RX);
     LL_DMA_DisableIT_HT(DMA_USART, LL_DMA_CHANNEL_RX);
     LL_DMA_EnableChannel(DMA_USART, LL_DMA_CHANNEL_RX);
+
+    _rx_probe_set_low();
 
     return true;
 }
