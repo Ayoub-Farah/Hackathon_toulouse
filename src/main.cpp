@@ -332,10 +332,7 @@ static void apply_mode_outputs(void)
 {
     if (mode == POWERMODE)
     {
-        if (!master)
-        {
-            spin.led.turnOn();
-        }
+        spin.led.turnOn();
     }
     else
     {
@@ -380,8 +377,8 @@ static void print_menu(void)
     printk(" ______________________________________________ \n"
            "|        ---- MENU test RS485 MMC ----         |\n"
            "|     press h : help                           |\n"
-           "|     press i : idle mode                      |\n"
-           "|     press p : power mode / start test        |\n"
+           "|     press i : idle mode + print report       |\n"
+           "|     press p : power mode / start test lead   |\n"
            "|______________________________________________|\n\n");
 }
 
@@ -555,6 +552,7 @@ void setup_routine(void)
            master ? "LEAD" : "MODULE",
            module_ID,
            static_cast<unsigned int>(MMC_FRAME_SIZE));
+    printk("Use 'p' on the LEAD board to start the RS485 chain, then 'i' to stop and print the report.\n");
 
     spin.gpio.configurePin(CONTROL_TASK_DEBUG_GPIO, OUTPUT);
     spin.gpio.resetPin(CONTROL_TASK_DEBUG_GPIO);
@@ -587,11 +585,12 @@ void loop_communication_task(void)
         print_menu();
         break;
     case 'i':
-        printk("idle mode\n");
+        printk("idle mode, report pending\n");
         set_mode(IDLEMODE);
         break;
     case 'p':
-        printk("power mode\n");
+        printk(master ? "power mode: LEAD transmitting on RS485, press i for report\n"
+                      : "power mode: MODULE waiting for lead frame / forwarding chain\n");
         set_mode(POWERMODE);
         break;
     default:
@@ -631,9 +630,6 @@ void loop_critical_task(void)
             fill_local_payload(dataTX_mmc, MMC_LEAD, POWER);
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
-        }
-        else{
-            spin.led.turnOn();
         }
     }
     else if (master && !send_idle)
