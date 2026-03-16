@@ -632,6 +632,9 @@ void loop_critical_task(void)
             memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
             communication.rs485.startTransmission();
         }
+        else{
+            spin.led.turnOn();
+        }
     }
     else if (master && !send_idle)
     {
@@ -641,6 +644,10 @@ void loop_critical_task(void)
         memcpy(buffer_tx, &dataTX_mmc, sizeof(dataTX_mmc));
         communication.rs485.startTransmission();
         send_idle = true;
+    }
+    else if (!master && mode == IDLEMODE)
+    {
+        spin.led.turnOff();
     }
 }
 
