@@ -60,7 +60,7 @@ constexpr uint8_t MMC_SM_COUNT = 10;
 constexpr uint8_t MMC_SM_FIRST = MMC_SM1;
 constexpr uint8_t MMC_SM_LAST = MMC_SM10;
 
-constexpr uint32_t CONTROL_TASK_PERIOD_US = 100U;
+constexpr uint32_t CONTROL_TASK_PERIOD_US = 200U;
 constexpr uint32_t BACKGROUND_TASK_PERIOD_MS = 200U;
 constexpr uint8_t CONTROL_TASK_DEBUG_GPIO = PC8;
 
