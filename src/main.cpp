@@ -77,15 +77,15 @@ constexpr float MODULE_TEST_CAP_VOLTAGES[MMC_SM_COUNT] = {
 
 constexpr uint32_t UID_MMC_LEAD_BOARD = 0x002B002A;
 constexpr uint32_t UID_MMC_SM1_BOARD = 0x0031001B;
-constexpr uint32_t UID_MMC_SM2_BOARD = 0x0033004B;
+constexpr uint32_t UID_MMC_SM2_BOARD = 0x0033004C;
 constexpr uint32_t UID_MMC_SM3_BOARD = 0x00330049;
-constexpr uint32_t UID_MMC_SM4_BOARD = 0x0033004C;
+constexpr uint32_t UID_MMC_SM4_BOARD = 0x0033004B;
 constexpr uint32_t UID_MMC_SM5_BOARD = 0x00330054;
-constexpr uint32_t UID_MMC_SM6_BOARD = 0x11119999;
-constexpr uint32_t UID_MMC_SM7_BOARD = 0x1111AAA0;
-constexpr uint32_t UID_MMC_SM8_BOARD = 0x1111BBB1;
-constexpr uint32_t UID_MMC_SM9_BOARD = 0x1111CCC2;
-constexpr uint32_t UID_MMC_SM10_BOARD = 0x1111CCC3;
+constexpr uint32_t UID_MMC_SM6_BOARD =  0x00290039;
+constexpr uint32_t UID_MMC_SM7_BOARD =  0x00290043;
+constexpr uint32_t UID_MMC_SM8_BOARD =  0x00290049;
+constexpr uint32_t UID_MMC_SM9_BOARD =  0x002A0053;
+constexpr uint32_t UID_MMC_SM10_BOARD = 0x0029004C;
 
 static uint32_t read_board_uid()
 {
